@@ -1,0 +1,70 @@
+# Copyright (c) 2026 Huasushis
+# Licensed under the MIT License. See LICENSE file for details.
+
+cmake_minimum_required(VERSION 3.14)
+project(KryptosCore VERSION 1.0.0 LANGUAGES CXX)
+
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
+
+# ---------------------------------------------------------------------------
+# Third-party dependencies
+# ---------------------------------------------------------------------------
+
+include(FetchContent)
+
+FetchContent_Declare(
+    picosha2
+    GIT_REPOSITORY https://github.com/okdshin/PicoSHA2.git
+    GIT_TAG        master
+)
+FetchContent_MakeAvailable(picosha2)
+
+# ---------------------------------------------------------------------------
+# Core library
+# ---------------------------------------------------------------------------
+
+add_library(kryptos_core STATIC
+    src/core.cpp
+    src/crypto_utils.cpp
+    src/manager.cpp
+)
+
+target_include_directories(kryptos_core
+    PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+)
+target_link_libraries(kryptos_core PRIVATE picosha2)
+
+# Compiler warnings (Google-style: treat warnings as errors on CI)
+if(MSVC)
+    target_compile_options(kryptos_core PRIVATE /W4)
+else()
+    target_compile_options(kryptos_core PRIVATE -Wall -Wextra -Wpedantic)
+endif()
+
+# ---------------------------------------------------------------------------
+# Console example
+# ---------------------------------------------------------------------------
+
+add_executable(kryptos example/main.cpp)
+target_link_libraries(kryptos PRIVATE kryptos_core)
+
+if(MSVC)
+    target_compile_options(kryptos PRIVATE /W4)
+else()
+    target_compile_options(kryptos PRIVATE -Wall -Wextra -Wpedantic)
+endif()
+
+# On Windows, link user32 for clipboard API.
+if(WIN32)
+    target_link_libraries(kryptos PRIVATE user32)
+endif()
+
+# ---------------------------------------------------------------------------
+# Install
+# ---------------------------------------------------------------------------
+
+install(TARGETS kryptos DESTINATION bin)
+install(DIRECTORY include/kryptos DESTINATION include)
