@@ -35,6 +35,10 @@
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
+#elif defined(__APPLE__)
+#include <mach-o/dyld.h>
+#include <termios.h>
+#include <unistd.h>
 #else
 #include <termios.h>
 #include <unistd.h>
@@ -52,10 +56,9 @@ fs::path GetExeDir() {
   GetModuleFileNameA(nullptr, buf, MAX_PATH);
   return fs::path(buf).parent_path();
 #elif defined(__APPLE__)
-  // macOS: use _NSGetExecutablePath or /proc/self/exe fallback.
+  // macOS: use _NSGetExecutablePath from <mach-o/dyld.h>.
   char buf[1024];
   uint32_t size = sizeof(buf);
-  extern int _NSGetExecutablePath(char*, uint32_t*);
   if (_NSGetExecutablePath(buf, &size) == 0) {
     return fs::canonical(buf).parent_path();
   }
