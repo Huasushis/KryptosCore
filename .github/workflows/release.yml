@@ -1,0 +1,115 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Determine next version from commit messages (Conventional Commits)
+  # ---------------------------------------------------------------------------
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      new_tag: ${{ steps.bump.outputs.new_tag }}
+      changelog: ${{ steps.bump.outputs.changelog }}
+      skipped: ${{ steps.bump.outputs.skipped }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Bump version and create tag
+        id: bump
+        uses: mathieudutour/github-tag-action@v6.2
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          default_bump: patch
+          release_branches: main
+          tag_prefix: v
+
+  # ---------------------------------------------------------------------------
+  # Build matrix: Windows / Linux / macOS
+  # ---------------------------------------------------------------------------
+  build:
+    needs: version
+    if: needs.version.outputs.skipped != 'true'
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            name: linux-x86_64
+            artifact: kryptos
+          - os: windows-latest
+            name: windows-x86_64
+            artifact: kryptos.exe
+          - os: macos-latest
+            name: macos-arm64
+            artifact: kryptos
+
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure CMake
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build build --config Release
+
+      - name: Locate binary
+        id: bin
+        shell: bash
+        run: |
+          if [ "${{ matrix.os }}" = "windows-latest" ]; then
+            BIN=$(find build -name "kryptos.exe" -type f | head -1)
+          else
+            BIN=$(find build -name "kryptos" -type f ! -name "*.dir" | head -1)
+          fi
+          echo "path=$BIN" >> "$GITHUB_OUTPUT"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: kryptos-${{ matrix.name }}
+          path: ${{ steps.bin.outputs.path }}
+
+  # ---------------------------------------------------------------------------
+  # Create GitHub Release with auto-generated changelog
+  # ---------------------------------------------------------------------------
+  release:
+    needs: [version, build]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Prepare release assets
+        run: |
+          mkdir -p release
+          for dir in artifacts/kryptos-*; do
+            platform=$(basename "$dir" | sed 's/^kryptos-//')
+            if [ -f "$dir/kryptos.exe" ]; then
+              cp "$dir/kryptos.exe" "release/kryptos-${platform}.exe"
+            elif [ -f "$dir/kryptos" ]; then
+              cp "$dir/kryptos" "release/kryptos-${platform}"
+              chmod +x "release/kryptos-${platform}"
+            fi
+          done
+          ls -la release/
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.version.outputs.new_tag }}
+          name: ${{ needs.version.outputs.new_tag }}
+          body: ${{ needs.version.outputs.changelog }}
+          files: release/*
+          generate_release_notes: true

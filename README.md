@@ -83,9 +83,19 @@ KryptosCore/
 │   └── manager.cpp
 ├── example/
 │   └── main.cpp          # Cross-platform CLI application
+├── docs/
+│   ├── API.md            # Public API reference
+│   └── ARCHITECTURE.md   # Internal algorithms (for porting)
+├── .github/workflows/
+│   └── release.yml       # Auto-build & release on push
 ├── CMakeLists.txt        # FetchContent pulls picosha2 automatically
 └── .gitignore
 ```
+
+### Documentation
+
+- [**API Reference**](docs/API.md) — public interface for library consumers.
+- [**Architecture & Algorithms**](docs/ARCHITECTURE.md) — internal implementation details for porting to other languages.
 
 ### Core module (`core.h / core.cpp`)
 
@@ -223,9 +233,19 @@ KryptosCore/
 │   └── manager.cpp
 ├── example/
 │   └── main.cpp          # 跨平台控制台应用
+├── docs/
+│   ├── API.md            # 公开 API 参考
+│   └── ARCHITECTURE.md   # 内部算法（便于移植）
+├── .github/workflows/
+│   └── release.yml       # 推送时自动构建与发布
 ├── CMakeLists.txt        # FetchContent 自动拉取 picosha2
 └── .gitignore
 ```
+
+### 文档
+
+- [**API 参考**](docs/API.md) — 面向库使用者的公开接口文档。
+- [**架构与算法**](docs/ARCHITECTURE.md) — 面向其他语言移植的内部实现细节。
 
 ### 核心模块（`core.h / core.cpp`）
 
