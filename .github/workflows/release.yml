@@ -32,10 +32,31 @@ jobs:
           tag_prefix: v
 
   # ---------------------------------------------------------------------------
+  # Cross-platform test matrix
+  # ---------------------------------------------------------------------------
+  test:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure CMake
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build tests
+        run: cmake --build build --config Release --target kryptos_tests
+
+      - name: Run tests
+        working-directory: build
+        run: ctest --output-on-failure -C Release
+
+  # ---------------------------------------------------------------------------
   # Build matrix: Windows / Linux / macOS
   # ---------------------------------------------------------------------------
   build:
-    needs: version
+    needs: [version, test]
     if: needs.version.outputs.skipped != 'true'
     strategy:
       matrix:

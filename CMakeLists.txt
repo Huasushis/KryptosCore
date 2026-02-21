@@ -63,6 +63,23 @@ if(WIN32)
 endif()
 
 # ---------------------------------------------------------------------------
+# Tests
+# ---------------------------------------------------------------------------
+
+enable_testing()
+
+add_executable(kryptos_tests tests/test_core.cpp)
+target_link_libraries(kryptos_tests PRIVATE kryptos_core)
+
+if(MSVC)
+    target_compile_options(kryptos_tests PRIVATE /W4)
+else()
+    target_compile_options(kryptos_tests PRIVATE -Wall -Wextra -Wpedantic)
+endif()
+
+add_test(NAME KryptosCoreTests COMMAND kryptos_tests)
+
+# ---------------------------------------------------------------------------
 # Install
 # ---------------------------------------------------------------------------
 
