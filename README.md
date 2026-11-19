@@ -25,6 +25,11 @@ Passwords are never stored — they are regenerated on-the-fly from a master pre
 
 ## Quick Start
 
+Program upgrades preserve `kryptos_data.dat` when only the executable is replaced.
+Use `kryptos update` for a verified update, `kryptos update --check` to check only,
+and `kryptos update --auto on` for optional startup checks (installation remains
+manual). See [updating and rollback](docs/UPDATES.md).
+
 WebDAV sync is available via `kryptos sync [url] [directory] [username]` and menu
 option 7. Missing directories are created automatically; encrypted metadata is
 shared with KryptosMobile. See [WebDAV sync](docs/WEBDAV.md) for setup, merge and

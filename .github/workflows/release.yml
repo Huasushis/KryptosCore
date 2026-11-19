@@ -84,7 +84,10 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y libcurl4-openssl-dev
 
       - name: Configure CMake
-        run: cmake -B build -DCMAKE_BUILD_TYPE=Release
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ needs.version.outputs.new_tag }}
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Release -DKRYPTOS_VERSION="${RELEASE_TAG#v}"
 
       - name: Build
         run: cmake --build build --config Release
@@ -121,6 +124,8 @@ jobs:
           path: artifacts
 
       - name: Prepare release assets
+        env:
+          RELEASE_TAG: ${{ needs.version.outputs.new_tag }}
         run: |
           mkdir -p release
           for dir in artifacts/kryptos-*; do
@@ -133,6 +138,7 @@ jobs:
             fi
           done
           ls -la release/
+          python3 scripts/release-manifest.py --version "${RELEASE_TAG#v}" --directory release
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2

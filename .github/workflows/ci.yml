@@ -23,3 +23,10 @@ jobs:
       - run: cmake -B build -DCMAKE_BUILD_TYPE=Release
       - run: cmake --build build --config Release
       - run: ctest --test-dir build --output-on-failure -C Release
+      - uses: actions/upload-artifact@v4
+        with:
+          name: KryptosCore-${{ matrix.os }}
+          path: |
+            build/kryptos
+            build/Release/kryptos.exe
+          if-no-files-found: error

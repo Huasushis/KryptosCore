@@ -2,7 +2,7 @@
 # Licensed under the MIT License. See LICENSE file for details.
 
 cmake_minimum_required(VERSION 3.14)
-project(KryptosCore VERSION 1.0.0 LANGUAGES CXX)
+project(KryptosCore VERSION 1.1.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -55,7 +55,11 @@ endif()
 # ---------------------------------------------------------------------------
 
 add_executable(kryptos example/main.cpp)
-add_library(kryptos_webdav_http STATIC src/webdav_http.cpp)
+set(KRYPTOS_VERSION "${PROJECT_VERSION}" CACHE STRING "Release version embedded in the CLI")
+add_library(kryptos_update STATIC src/update.cpp)
+target_link_libraries(kryptos_update PUBLIC kryptos_core)
+target_compile_definitions(kryptos_update PRIVATE KRYPTOS_VERSION="${KRYPTOS_VERSION}")
+add_library(kryptos_webdav_http STATIC src/webdav_http.cpp src/update_http.cpp)
 target_link_libraries(kryptos_webdav_http PUBLIC kryptos_core)
 if(WIN32)
     target_link_libraries(kryptos_webdav_http PRIVATE winhttp)
@@ -63,7 +67,7 @@ else()
     find_package(CURL REQUIRED)
     target_link_libraries(kryptos_webdav_http PRIVATE CURL::libcurl)
 endif()
-target_link_libraries(kryptos PRIVATE kryptos_webdav_http)
+target_link_libraries(kryptos PRIVATE kryptos_webdav_http kryptos_update)
 
 if(MSVC)
     target_compile_options(kryptos PRIVATE /W4)
@@ -95,8 +99,13 @@ add_test(NAME KryptosCoreTests COMMAND kryptos_tests)
 add_executable(kryptos_webdav_tests tests/test_webdav.cpp)
 target_link_libraries(kryptos_webdav_tests PRIVATE kryptos_core)
 add_test(NAME KryptosWebDavTests COMMAND kryptos_webdav_tests)
+add_executable(kryptos_update_tests tests/test_update.cpp)
+target_link_libraries(kryptos_update_tests PRIVATE kryptos_update)
+add_test(NAME KryptosUpdateTests COMMAND kryptos_update_tests)
 find_package(Python3 COMPONENTS Interpreter QUIET)
 if(Python3_Interpreter_FOUND)
+    add_test(NAME KryptosUpdateApplyTests COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_update_apply.py --binary $<TARGET_FILE:kryptos_update_tests>)
     add_test(NAME KryptosWebDavHttpTests COMMAND ${Python3_EXECUTABLE}
         ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_webdav_http.py --binary $<TARGET_FILE:kryptos>)
 endif()

@@ -29,6 +29,7 @@
 #include "kryptos/crypto_utils.h"
 #include "kryptos/manager.h"
 #include "kryptos/webdav.h"
+#include "kryptos/update.h"
 
 // ---------------------------------------------------------------------------
 // Platform-specific helpers
@@ -51,24 +52,26 @@ namespace fs = std::filesystem;
 
 // ---- Executable directory -------------------------------------------------
 
-fs::path GetExeDir() {
+fs::path GetExePath() {
 #ifdef _WIN32
-  char buf[MAX_PATH];
-  GetModuleFileNameA(nullptr, buf, MAX_PATH);
-  return fs::path(buf).parent_path();
+  wchar_t buf[32768];
+  const auto length = GetModuleFileNameW(nullptr, buf, 32768);
+  if (!length || length == 32768) throw std::runtime_error("Cannot locate executable");
+  return fs::path(std::wstring(buf, length));
 #elif defined(__APPLE__)
   // macOS: use _NSGetExecutablePath from <mach-o/dyld.h>.
   char buf[1024];
   uint32_t size = sizeof(buf);
   if (_NSGetExecutablePath(buf, &size) == 0) {
-    return fs::canonical(buf).parent_path();
+    return fs::canonical(buf);
   }
-  return fs::current_path();
+  throw std::runtime_error("Cannot locate executable");
 #else
   // Linux.
-  return fs::canonical("/proc/self/exe").parent_path();
+  return fs::canonical("/proc/self/exe");
 #endif
 }
+fs::path GetExeDir() { return GetExePath().parent_path(); }
 
 const std::string kDataFileName = "kryptos_data.dat";
 
@@ -231,6 +234,9 @@ void PrintHelp() {
       << "  kryptos export [file]            Export data (Base64)\n"
       << "  kryptos import <file>            Import data (Base64)\n"
       << "  kryptos sync [url] [dir] [user]  Merge encrypted metadata via WebDAV\n"
+      << "  kryptos version                  Show installed version\n"
+      << "  kryptos update [--check]          Check / install latest stable release\n"
+      << "  kryptos update --auto on|off      Startup update checks (no auto install)\n"
       << "  kryptos help                     Show this help\n"
       << "\n"
       << "When generating a password, you will be prompted for a prefix\n"
@@ -521,7 +527,40 @@ bool CmdSync(kryptos::AccountManager& mgr, std::string url = "",
 
 // ---- Interactive mode -----------------------------------------------------
 
+bool AutoUpdateCheck() {
+  std::ifstream input(GetExeDir() / "kryptos-update-settings.txt");
+  std::string value; std::getline(input, value);
+  return value == "auto-check=on";
+}
+void SetAutoUpdateCheck(bool enabled) {
+  std::ofstream output(GetExeDir() / "kryptos-update-settings.txt", std::ios::trunc);
+  output << (enabled ? "auto-check=on\n" : "auto-check=off\n");
+  output.close();
+  if (!output) throw std::runtime_error("Cannot save update settings next to executable");
+}
+bool CmdUpdate(bool check_only) {
+  std::cout << "Installed version: " << kryptos::CurrentVersion() << "\n";
+  const auto info = kryptos::CheckForUpdate(kryptos::DownloadUpdate);
+  if (!kryptos::IsNewerVersion(info.version, kryptos::CurrentVersion())) {
+    std::cout << "Already up to date.\n"; return false;
+  }
+  std::cout << "Update available: " << info.version << "\n";
+  if (check_only) { std::cout << "Run kryptos update to install.\n"; return false; }
+  std::cout << "Replace program, preserving kryptos_data.dat and keeping .old for rollback? [y/N]: " << std::flush;
+  std::string answer;
+  if (!std::getline(std::cin, answer) || (answer != "y" && answer != "Y")) { std::cout << "Update cancelled.\n"; return false; }
+  const auto executable = GetExePath();
+  const auto staged = kryptos::StageUpdate(info, executable, kryptos::DownloadUpdate);
+  try { kryptos::ApplyUpdate(executable, staged); }
+  catch (...) { std::error_code ignored; fs::remove(staged, ignored); throw; }
+  std::cout << "Update prepared. This process will exit; start Kryptos again.\n"
+            << "On Windows, replacement finishes after exit; failures appear in .update-error.txt.\n";
+  return true;
+}
 void InteractiveMode(kryptos::AccountManager& mgr) {
+  if (AutoUpdateCheck()) {
+    try { CmdUpdate(true); } catch (const std::exception& e) { std::cout << "Update check: " << e.what() << "\n"; }
+  }
   std::cout << "KryptosCore - Deterministic Password Manager\n\n";
 
   for (;;) {
@@ -532,6 +571,8 @@ void InteractiveMode(kryptos::AccountManager& mgr) {
               << "  5. Export data\n"
               << "  6. Import data\n"
               << "  7. WebDAV sync\n"
+              << "  8. Check / install update\n"
+              << "  9. Toggle startup update checks\n"
               << "  0. Exit\n"
               << "\n> ";
 
@@ -573,6 +614,11 @@ void InteractiveMode(kryptos::AccountManager& mgr) {
 
     } else if (choice == "7") {
       CmdSync(mgr);
+    } else if (choice == "8" || choice == "9") {
+      try {
+        if (choice == "8") { if (CmdUpdate(false)) break; }
+        else { const bool enabled = !AutoUpdateCheck(); SetAutoUpdateCheck(enabled); std::cout << "Startup update checks " << (enabled ? "on" : "off") << ".\n"; }
+      } catch (const std::exception& e) { std::cerr << "Update failed: " << e.what() << "\n"; }
     } else {
       std::cout << "Unknown option. Enter 0 to exit.\n";
     }
@@ -586,6 +632,18 @@ void InteractiveMode(kryptos::AccountManager& mgr) {
 // ===========================================================================
 
 int main(int argc, char* argv[]) {
+  if (argc >= 2 && (std::string(argv[1]) == "version" || std::string(argv[1]) == "--version")) {
+    std::cout << "KryptosCore " << kryptos::CurrentVersion() << "\n"; return 0;
+  }
+  if (argc >= 2 && std::string(argv[1]) == "update") {
+    try {
+      if (argc == 4 && std::string(argv[2]) == "--auto" && (std::string(argv[3]) == "on" || std::string(argv[3]) == "off")) {
+        SetAutoUpdateCheck(std::string(argv[3]) == "on"); return 0;
+      }
+      if (argc > 3 || (argc == 3 && std::string(argv[2]) != "--check")) throw std::runtime_error("Usage: kryptos update [--check | --auto on|off]");
+      CmdUpdate(argc == 3); return 0;
+    } catch (const std::exception& e) { std::cerr << "Update failed: " << e.what() << "\n"; return 1; }
+  }
   kryptos::AccountManager mgr;
   if (!LoadManager(mgr)) return 1;
 
