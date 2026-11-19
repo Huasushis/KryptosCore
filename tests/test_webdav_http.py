@@ -77,10 +77,10 @@ try:
             (directory / 'kryptos_data.dat').write_bytes(f'KRYPTOS:V1\n1\n{site}\t{username}-uuid\t{username}\t16\tfull\n'.encode())
             devices.append(executable)
 
-        def sync(device, password='backup-password', token='token'):
+        def sync(device, password='backup-password', token='token', choices=''):
             env = dict(os.environ, KRYPTOS_WEBDAV_PASSWORD=token, KRYPTOS_BACKUP_PASSWORD=password)
             return subprocess.run([str(device), 'sync', f'http://127.0.0.1:{server.server_port}/dav/', 'Backups/My vault', 'user'],
-                                  env=env, text=True, capture_output=True, timeout=45)
+                                  env=env, input=choices, text=True, capture_output=True, timeout=45)
 
         for device in [devices[0], devices[1], devices[0]]:
             result = sync(device)
@@ -106,10 +106,37 @@ try:
             assert sync(devices[0]).returncode != 0
         state['status'] = 0
         assert data.read_bytes() == before and state['body'] == remote_before
+        # Create a local conflict against the real encrypted remote snapshot.
+        conflict_data = before.replace(b'alice-uuid', b'different-uuid').replace(b'\t16\tfull', b'\t20\talphanum', 1)
+        data.write_bytes(conflict_data)
+        puts = state['puts']
+        for choices in ['', 'c\n', 'r\nn\n', 'l\n']:
+            cancelled = sync(devices[0], choices=choices)
+            assert cancelled.returncode != 0
+            assert data.read_bytes() == conflict_data and state['body'] == remote_before
+        assert state['puts'] == puts
+        remote_choice = sync(devices[0], choices='invalid\nr\ny\n')
+        assert remote_choice.returncode == 0, remote_choice.stderr
+        assert 'Account seeds differ' in remote_choice.stdout
+        assert 'Apply all choices' in remote_choice.stdout
+        assert data.read_bytes() == before
+        data.write_bytes(conflict_data)
+        state['race'] = True
+        assert sync(devices[0], choices='l\ny\n').returncode != 0
+        assert data.read_bytes() == conflict_data
+        state['race'] = False
+        local_choice = sync(devices[0], choices='l\ny\n')
+        assert local_choice.returncode == 0, local_choice.stderr
+        assert data.read_bytes() == conflict_data
+        # The second device must see the chosen local version and may adopt it.
+        adopted = sync(devices[1], choices='r\ny\n')
+        assert adopted.returncode == 0, adopted.stderr
+        assert sorted((devices[1].parent / 'kryptos_data.dat').read_bytes().splitlines()[2:]) == sorted(conflict_data.splitlines()[2:])
+        before = conflict_data
         state['body'] = b'corrupt'
         assert sync(devices[0]).returncode != 0
         assert data.read_bytes() == before and state['body'] == b'corrupt'
-        print('Real WebDAV transport: directory creation, two-device merge, encryption, errors and conditional PUT passed')
+        print('Real WebDAV transport: merges, local/cloud choices, cancellation, errors and conditional PUT passed')
 finally:
     server.shutdown()
     server.server_close()

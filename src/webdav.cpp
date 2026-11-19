@@ -30,23 +30,54 @@ std::string IdentityPart(std::string value) {
 std::string Identity(const AccountEntry& e) {
   return IdentityPart(e.webname) + '\0' + IdentityPart(e.username);
 }
-void Merge(AccountManager& merged, const AccountManager& incoming) {
-  for (const auto& entry : incoming.Entries()) {
+void ValidateAccounts(const AccountManager& manager) {
+  std::map<std::string, bool> identities;
+  for (const auto& entry : manager.Entries()) {
     if (entry.webname.empty() || entry.username.empty() || entry.uuid.empty() ||
         entry.length < 4 || entry.length > 128 ||
         (entry.charset_preset != "full" && entry.charset_preset != "alphanum"))
       throw std::runtime_error("Invalid entry in sync data");
-    const AccountEntry* previous = nullptr;
-    for (const auto& e : merged.Entries()) if (Identity(e) == Identity(entry)) { previous = &e; break; }
-    if (previous) {
-      if (previous->webname != entry.webname || previous->username != entry.username ||
-          previous->uuid != entry.uuid || previous->length != entry.length ||
-          previous->charset_preset != entry.charset_preset)
-        throw std::runtime_error("Sync conflict: same site/account has different password generation data; resolve via backup import first");
+    if (!identities.emplace(Identity(entry), true).second)
+      throw std::runtime_error("Duplicate account in sync data");
+  }
+}
+AccountManager Merge(const AccountManager& local, const AccountManager& remote,
+                     const WebDavConflictResolver& resolve_conflicts) {
+  ValidateAccounts(local);
+  ValidateAccounts(remote);
+  std::vector<AccountEntry> entries = local.Entries();
+  std::map<std::string, size_t> positions;
+  for (size_t i = 0; i < entries.size(); ++i) positions.emplace(Identity(entries[i]), i);
+  std::vector<WebDavConflict> conflicts;
+  std::vector<size_t> conflict_positions;
+  for (const auto& entry : remote.Entries()) {
+    const auto position = positions.find(Identity(entry));
+    if (position != positions.end()) {
+      const auto& previous = entries[position->second];
+      if (previous.webname != entry.webname || previous.username != entry.username ||
+          previous.uuid != entry.uuid || previous.length != entry.length ||
+          previous.charset_preset != entry.charset_preset) {
+        conflicts.push_back({previous, entry});
+        conflict_positions.push_back(position->second);
+      }
     } else {
-      merged.AddEntry(entry.webname, entry.uuid, entry.username, entry.length, entry.charset_preset);
+      positions.emplace(Identity(entry), entries.size());
+      entries.push_back(entry);
     }
   }
+  if (entries.size() > 10000) throw std::runtime_error("Too many accounts for sync");
+  if (!conflicts.empty()) {
+    if (!resolve_conflicts) throw std::runtime_error("Sync conflict: choose local or cloud for each account");
+    const auto choices = resolve_conflicts(conflicts);
+    if (choices.size() != conflicts.size()) throw std::runtime_error("Choose local or cloud for every sync conflict");
+    for (size_t i = 0; i < choices.size(); ++i) {
+      if (choices[i] == WebDavChoice::UseRemote) entries[conflict_positions[i]] = conflicts[i].remote;
+      else if (choices[i] != WebDavChoice::KeepLocal) throw std::runtime_error("WebDAV sync cancelled");
+    }
+  }
+  AccountManager merged;
+  for (const auto& entry : entries) merged.AddEntry(entry.webname, entry.uuid, entry.username, entry.length, entry.charset_preset);
+  return merged;
 }
 }  // namespace
 
@@ -77,7 +108,8 @@ WebDavPaths BuildWebDavPaths(const WebDavConfig& config) {
 
 AccountManager SyncWebDav(const AccountManager& local, const WebDavConfig& config,
                          const std::string& backup_password,
-                         const std::string& nonce, const DavTransport& transport) {
+                         const std::string& nonce, const DavTransport& transport,
+                         const WebDavConflictResolver& resolve_conflicts) {
   if (backup_password.empty()) throw std::invalid_argument("A separate backup password is required for sync");
   if (nonce.size() != 16) throw std::invalid_argument("Sync requires 16 random nonce bytes");
   const auto paths = BuildWebDavPaths(config);
@@ -103,7 +135,7 @@ AccountManager SyncWebDav(const AccountManager& local, const WebDavConfig& confi
   }
   const auto remote = request(paths.file, "GET");
   AccountManager merged;
-  Merge(merged, local);
+  merged = Merge(local, {}, {});
   DavHeaders condition;
   if (remote.status == 404) {
     condition["If-None-Match"] = "*";
@@ -112,7 +144,7 @@ AccountManager SyncWebDav(const AccountManager& local, const WebDavConfig& confi
       throw std::runtime_error("WebDAV must provide a strong ETag for safe sync");
     AccountManager incoming;
     incoming.ImportBase64(remote.body, backup_password);
-    Merge(merged, incoming);
+    merged = Merge(local, incoming, resolve_conflicts);
     condition["If-Match"] = remote.etag;
   } else {
     throw std::runtime_error("Cannot read WebDAV backup (HTTP " + std::to_string(remote.status) + ")");

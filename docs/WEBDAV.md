@@ -37,20 +37,31 @@ device encryption keys and WebDAV credentials are not uploaded.
 2. Download the remote backup; only a 404 means a new backup.
 3. Authenticate/decrypt and merge additions. Identical accounts are deduplicated.
    Same site/account with different UUID, spelling, password length or charset
-   stops sync with a conflict. Resolve via existing backup import first.
+   pauses sync for review. The CLI shows both versions and whether account seeds
+   differ. For each account, enter `l` to keep local, `r` to use cloud, or `c` to
+   cancel. There is no default winner. After choosing every account, confirm with
+   `y` to apply and sync. Empty input, EOF, or declining confirmation cancels
+   without writing either dataset. Other accounts from both sides are retained.
 4. Encrypt the union and conditionally upload. A new file uses `If-None-Match: *`;
    an existing file uses its strong ETag in `If-Match`. HTTP 412 means another
    writer changed it: retry to download and merge again. A server must support
    conditional PUT and return strong ETags. Sync refuses weak/missing tags.
+   Changes made by another device while you review also trigger 412. Start sync
+   again to review the new versions; previous choices are not reused.
 5. Save locally only after upload succeeds. Local writes use temporary-file
    replacement. If the local save fails after upload, retry after fixing storage.
 
 Sync is manual and additive, matching the existing merge-import model. It does
 not propagate deletions or automatically choose between edits. A deleted entry
-may return from another device. Use existing encrypted export/import to reconcile
-or replace datasets intentionally. Wrong passwords, corrupt data, unauthorized
-access and conflicts leave the local entries unchanged and do not overwrite the
-remote file. Requests have timeouts and a 2 MB payload limit.
+may return from another device; renaming a site/account may leave both names.
+Selecting cloud replaces that account's entire generation metadata, including
+its UUID. Selecting local publishes that account's local version to the cloud.
+Choose the version that generates the password you currently use; a different
+seed, name, length or charset can change that password. Wrong passwords, corrupt
+data, unauthorized access, cancelled review and incomplete choices leave local
+entries unchanged and do not overwrite the remote file. Requests have timeouts
+and a 2 MB payload limit. Library consumers can pass a `WebDavConflictResolver`
+to `SyncWebDav`; without it, conflicts still fail closed.
 
 ## Build
 

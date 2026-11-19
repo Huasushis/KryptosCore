@@ -81,6 +81,54 @@ int main() {
     const int before_conflict = puts;
     Throws([&] { kryptos::SyncWebDav(local, config, key, nonce, transport); });
     Check(puts == before_conflict);
+    // Resolve multiple accounts independently and keep additions from both sides.
+    kryptos::AccountManager device, cloud;
+    device.AddEntry("local.example", "local-uuid", "alice");
+    device.AddEntry("remote.example", "device-bob", "bob", 24);
+    device.AddEntry("device-only.example", "device-only", "carol");
+    cloud.AddEntry("local.example", "cloud-alice", "alice", 20, "alphanum");
+    cloud.AddEntry("remote.example", "remote-uuid", "bob", 16);
+    cloud.AddEntry("cloud-only.example", "cloud-only", "dave");
+    stored = cloud.ExportBase64(key, nonce);
+    put_status = 204;
+    const auto resolved = kryptos::SyncWebDav(device, config, key, nonce, transport,
+        [&](const std::vector<kryptos::WebDavConflict>& conflicts) {
+          Check(conflicts.size() == 2);
+          Check(conflicts[0].local.uuid == "local-uuid" && conflicts[0].remote.uuid == "cloud-alice");
+          return std::vector<kryptos::WebDavChoice>{kryptos::WebDavChoice::UseRemote, kryptos::WebDavChoice::KeepLocal};
+        });
+    Check(resolved.Size() == 4 && device.Size() == 3);
+    Check(resolved.FindEntry("local.example", "alice")->uuid == "cloud-alice");
+    Check(resolved.FindEntry("local.example", "alice")->length == 20);
+    Check(resolved.FindEntry("remote.example", "bob")->uuid == "device-bob");
+    Check(resolved.FindEntry("remote.example", "bob")->length == 24);
+    Check(device.FindEntry("local.example", "alice")->uuid == "local-uuid");
+    decoded.ImportBase64(stored, key);
+    Check(decoded.SerializeToText() == resolved.SerializeToText());
+    const int resolved_puts = puts;
+    const auto resolved_body = stored;
+    Throws([&] { kryptos::SyncWebDav(device, config, key, nonce, transport,
+        [](const auto&) { return std::vector<kryptos::WebDavChoice>{}; }); });
+    Throws([&] { kryptos::SyncWebDav(device, config, key, nonce, transport,
+        [](const auto&) { return std::vector<kryptos::WebDavChoice>{kryptos::WebDavChoice::Cancel}; }); });
+    Check(puts == resolved_puts && stored == resolved_body);
+    // Decisions made during review cannot bypass the original conditional PUT.
+    Throws([&] { kryptos::SyncWebDav(device, config, key, nonce, transport,
+        [&](const auto&) {
+          put_status = 412;
+          return std::vector<kryptos::WebDavChoice>{kryptos::WebDavChoice::KeepLocal};
+        }); });
+    Check(stored == resolved_body);
+    // A fresh sync invokes the resolver again; previous decisions are not cached.
+    put_status = 204;
+    bool reviewed_again = false;
+    const auto retry = kryptos::SyncWebDav(device, config, key, nonce, transport,
+        [&](const auto& conflicts) {
+          reviewed_again = true;
+          Check(conflicts.size() == 1);
+          return std::vector<kryptos::WebDavChoice>{kryptos::WebDavChoice::UseRemote};
+        });
+    Check(reviewed_again && retry.FindEntry("local.example", "alice")->uuid == "cloud-alice");
     created = true; get_status = 404; put_status = 204; stored.clear();
     Check(kryptos::SyncWebDav(local, config, key, nonce, transport).Size() == 1);
     Throws([&] { kryptos::SyncWebDav(local, config, "", nonce, transport); });

@@ -453,6 +453,39 @@ std::string EnvValue(const char* name) {
   return value ? value : "";
 }
 
+std::vector<kryptos::WebDavChoice> ResolveSyncConflicts(
+    const std::vector<kryptos::WebDavConflict>& conflicts) {
+  std::vector<kryptos::WebDavChoice> choices;
+  std::cout << "\nChoose the version that generates the password you currently use.\n"
+            << "Choices update this device and the cloud. Other accounts are merged.\n";
+  for (size_t i = 0; i < conflicts.size(); ++i) {
+    const auto& conflict = conflicts[i];
+    std::cout << "\nConflict " << (i + 1) << " of " << conflicts.size() << "\n";
+    auto show = [](const char* label, const kryptos::AccountEntry& entry) {
+      std::cout << label << ": " << entry.webname << " / " << entry.username
+                << ", length " << entry.length << ", charset " << entry.charset_preset << "\n";
+    };
+    show("Local", conflict.local);
+    show("Cloud", conflict.remote);
+    if (conflict.local.uuid != conflict.remote.uuid)
+      std::cout << "Account seeds differ: these versions generate different passwords even with the same settings.\n";
+    for (;;) {
+      std::cout << "[l] Keep local, [r] Use cloud, [c] Cancel sync: " << std::flush;
+      std::string choice;
+      if (!std::getline(std::cin, choice) || choice.empty() || choice == "c" || choice == "C")
+        throw std::runtime_error("WebDAV sync cancelled");
+      if (choice == "l" || choice == "L") { choices.push_back(kryptos::WebDavChoice::KeepLocal); break; }
+      if (choice == "r" || choice == "R") { choices.push_back(kryptos::WebDavChoice::UseRemote); break; }
+      std::cout << "Enter l, r or c.\n";
+    }
+  }
+  std::cout << "Apply all choices and sync? [y/N]: " << std::flush;
+  std::string confirm;
+  if (!std::getline(std::cin, confirm) || (confirm != "y" && confirm != "Y"))
+    throw std::runtime_error("WebDAV sync cancelled");
+  return choices;
+}
+
 bool CmdSync(kryptos::AccountManager& mgr, std::string url = "",
              std::string directory = "", std::string username = "") {
   kryptos::WebDavConfig config;
@@ -475,7 +508,7 @@ bool CmdSync(kryptos::AccountManager& mgr, std::string url = "",
     ~ClearSecrets() { kryptos::crypto::SecureClear(password); kryptos::crypto::SecureClear(key); }
   } clear{config.password, key};
   try {
-    const auto next = kryptos::SyncWebDav(mgr, config, key, GenerateNonce(), kryptos::WebDavHttpRequest);
+    const auto next = kryptos::SyncWebDav(mgr, config, key, GenerateNonce(), kryptos::WebDavHttpRequest, ResolveSyncConflicts);
     if (!SaveManager(next)) throw std::runtime_error("Remote synced but local save failed; retry sync after fixing local storage");
     mgr = next;
     std::cout << "WebDAV sync complete. " << mgr.Size() << " entries. Local deletions are not propagated.\n";
