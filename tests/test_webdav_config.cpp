@@ -24,6 +24,11 @@ int main() {
     const auto text = Read(file);
     Check(text.find(config.connection.password) == std::string::npos);
     Check(text.find(kryptos::crypto::Base64Encode(config.connection.password)) == std::string::npos);
+    std::string windows_text;
+    for (const auto ch : text) { if (ch == '\n') windows_text += '\r'; windows_text += ch; }
+    { std::ofstream output(file, std::ios::binary | std::ios::trunc); output << windows_text; }
+    Check(kryptos::LoadWebDavConfig(file).remember_backup_password);
+    { std::ofstream output(file, std::ios::binary | std::ios::trunc); output << text; }
     auto another = config.connection;
     another.directory = "another directory";
     Check(kryptos::WebDavCredentialTarget(another) == kryptos::WebDavCredentialTarget(config.connection));

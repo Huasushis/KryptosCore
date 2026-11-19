@@ -32,9 +32,11 @@ SavedWebDavConfig LoadWebDavConfig(const fs::path& file) {
   if (!input) throw std::runtime_error("Cannot read saved WebDAV configuration");
   std::string line;
   std::getline(input, line);
+  if (!line.empty() && line.back() == '\r') line.pop_back();
   if (line != "KRYPTOS_WEBDAV_CONFIG_V1") throw std::runtime_error("Unsupported WebDAV configuration");
   std::map<std::string, std::string> fields;
   while (std::getline(input, line)) {
+    if (!line.empty() && line.back() == '\r') line.pop_back();
     const auto split = line.find('=');
     if (split == std::string::npos || !fields.emplace(line.substr(0, split), line.substr(split + 1)).second)
       throw std::runtime_error("Invalid saved WebDAV configuration");
