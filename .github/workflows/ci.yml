@@ -23,6 +23,8 @@ jobs:
       - run: cmake -B build -DCMAKE_BUILD_TYPE=Release
       - run: cmake --build build --config Release
       - run: ctest --test-dir build --output-on-failure -C Release
+        env:
+          KRYPTOS_TEST_SYSTEM_CREDENTIALS: ${{ runner.os == 'Windows' && '1' || '' }}
       - uses: actions/upload-artifact@v4
         with:
           name: KryptosCore-${{ matrix.os }}

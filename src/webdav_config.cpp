@@ -39,13 +39,21 @@ SavedWebDavConfig LoadWebDavConfig(const fs::path& file) {
     if (split == std::string::npos || !fields.emplace(line.substr(0, split), line.substr(split + 1)).second)
       throw std::runtime_error("Invalid saved WebDAV configuration");
   }
-  if (fields.size() != 4 || !fields.count("url") || !fields.count("directory") || !fields.count("username") ||
+  for (const auto& field : fields) {
+    if (field.first != "url" && field.first != "directory" && field.first != "username" &&
+        field.first != "rememberPassword" && field.first != "rememberBackupPassword")
+      throw std::runtime_error("Unknown saved WebDAV field");
+  }
+  if ((fields.size() != 4 && fields.size() != 5) || !fields.count("url") || !fields.count("directory") || !fields.count("username") ||
       (fields["rememberPassword"] != "0" && fields["rememberPassword"] != "1"))
     throw std::runtime_error("Incomplete saved WebDAV configuration");
   saved.connection.url = Decode(fields.at("url"));
   saved.connection.directory = Decode(fields.at("directory"));
   saved.connection.username = Decode(fields.at("username"));
   saved.remember_password = fields["rememberPassword"] == "1";
+  saved.remember_backup_password = fields.count("rememberBackupPassword") && fields["rememberBackupPassword"] == "1";
+  if (fields.count("rememberBackupPassword") && fields["rememberBackupPassword"] != "0" && fields["rememberBackupPassword"] != "1")
+    throw std::runtime_error("Invalid saved WebDAV password setting");
   Validate(saved.connection);
   return saved;
 }
@@ -62,7 +70,8 @@ void SaveWebDavConfig(const fs::path& file, const SavedWebDavConfig& saved) {
   output << "KRYPTOS_WEBDAV_CONFIG_V1\nurl=" << crypto::Base64Encode(saved.connection.url)
          << "\ndirectory=" << crypto::Base64Encode(saved.connection.directory)
          << "\nusername=" << crypto::Base64Encode(saved.connection.username)
-         << "\nrememberPassword=" << (saved.remember_password ? '1' : '0') << '\n';
+         << "\nrememberPassword=" << (saved.remember_password ? '1' : '0')
+         << "\nrememberBackupPassword=" << (saved.remember_backup_password ? '1' : '0') << '\n';
   output.close();
   if (!output) throw std::runtime_error("Cannot save WebDAV configuration");
   fs::permissions(staged, fs::perms::owner_read | fs::perms::owner_write);
@@ -75,5 +84,8 @@ void SaveWebDavConfig(const fs::path& file, const SavedWebDavConfig& saved) {
 }
 std::string WebDavCredentialTarget(const WebDavConfig& config) {
   return "KryptosCore/WebDAV/" + Sha256Hex(config.url + '\0' + config.username);
+}
+std::string WebDavBackupCredentialTarget(const WebDavConfig& config) {
+  return "KryptosCore/WebDAVBackup/" + Sha256Hex(config.url + '\0' + config.directory + '\0' + config.username);
 }
 }

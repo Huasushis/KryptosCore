@@ -135,7 +135,7 @@ try:
         before = conflict_data
         # Configure a device once, then sync without repeating endpoint arguments.
         setup = subprocess.run([str(devices[0]), 'sync-config'],
-            input=f'http://127.0.0.1:{server.server_port}/dav/\nBackups/My vault\nuser\nn\n',
+            input=f'http://127.0.0.1:{server.server_port}/dav/\nBackups/My vault\nuser\nn\nn\n',
             text=True, capture_output=True, timeout=20)
         assert setup.returncode == 0, setup.stderr
         config_path = devices[0].parent / 'kryptos-webdav.conf'
@@ -145,10 +145,31 @@ try:
             env.pop(name, None)
         reused = subprocess.run([str(devices[0]), 'sync'], env=env, input='', text=True, capture_output=True, timeout=45)
         assert reused.returncode == 0, reused.stderr
+        if os.environ.get('KRYPTOS_TEST_SYSTEM_CREDENTIALS'):
+            setup = subprocess.run([str(devices[0]), 'sync-config'],
+                input='\n\n\ny\ntoken\ny\nbackup-password\n', text=True, capture_output=True, timeout=20)
+            assert setup.returncode == 0, setup.stderr
+            assert 'unavailable' not in setup.stderr
+            assert b'token' not in config_path.read_bytes() and b'backup-password' not in config_path.read_bytes()
+            no_secrets = dict(env)
+            no_secrets.pop('KRYPTOS_WEBDAV_PASSWORD', None)
+            no_secrets.pop('KRYPTOS_BACKUP_PASSWORD', None)
+            reused = subprocess.run([str(devices[0]), 'sync'], env=no_secrets, input='', text=True, capture_output=True, timeout=45)
+            assert reused.returncode == 0, reused.stderr
+            assert 'password / app token:' not in reused.stderr and 'Backup password (' not in reused.stderr
         # A different account must never receive a remembered password.
         cleared = subprocess.run([str(devices[0]), 'sync-config', '--clear'], capture_output=True, text=True, timeout=20)
         assert cleared.returncode == 0, cleared.stderr
         assert not config_path.exists() and data.read_bytes() == before
+        if os.environ.get('KRYPTOS_TEST_SYSTEM_CREDENTIALS'):
+            # Recreate only the non-secret flags; cleared credentials must not be recoverable.
+            import base64
+            config_path.write_text('KRYPTOS_WEBDAV_CONFIG_V1\nurl=' + base64.b64encode(f'http://127.0.0.1:{server.server_port}/dav/'.encode()).decode()
+                + '\ndirectory=' + base64.b64encode(b'Backups/My vault').decode() + '\nusername=dXNlcg==\nrememberPassword=1\nrememberBackupPassword=1\n')
+            missing = subprocess.run([str(devices[0]), 'sync'], env=no_secrets, input='', text=True, capture_output=True, timeout=45)
+            assert missing.returncode != 0
+            assert 'password / app token:' in missing.stderr and 'Backup password (' in missing.stderr
+            config_path.unlink()
         state['body'] = b'corrupt'
         assert sync(devices[0]).returncode != 0
         assert data.read_bytes() == before and state['body'] == b'corrupt'

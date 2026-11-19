@@ -14,10 +14,14 @@ macOS Keychain, or Linux Secret Service (libsecret and an unlocked desktop keyri
 are required). If the credential store is unavailable, settings can still be saved
 and the password entered for each sync. Remembered credentials are tied to the
 exact server URL and username; they are never reused for a different connection.
-The backup encryption password is not saved.
+Setup separately offers to remember the backup encryption password in the same
+system credential store. The two passwords are stored under separate keys. The
+backup password is scoped to the exact server URL, directory and username so it
+is not reused for another sync location. Environment password values take
+precedence; missing or inaccessible remembered passwords fall back to hidden input.
 
 Use `kryptos sync-config --clear` (menu 11) to delete the saved connection and its
-remembered login password; this preserves account metadata and remote backups.
+remembered login and backup passwords; this preserves account metadata and remote backups.
 If authentication fails after a password change, run setup again to replace the
 stored password. Windows network requests follow the current user's system proxy
 settings; no proxy is configured in the WebDAV connection file.

@@ -12,7 +12,7 @@
 #endif
 namespace kryptos {
 namespace {
-[[noreturn]] void Unavailable() { throw std::runtime_error("System credential store is unavailable; enter the WebDAV password manually"); }
+[[noreturn]] void Unavailable() { throw std::runtime_error("System credential store is unavailable; enter the password manually"); }
 #ifdef _WIN32
 std::wstring Wide(const std::string& text) {
   const int size = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, text.data(), static_cast<int>(text.size()), nullptr, 0);
@@ -38,8 +38,8 @@ std::string CredentialBackendName() {
   return "unavailable in this build";
 #endif
 }
-std::optional<std::string> ReadWebDavCredential(const WebDavConfig& config) {
-  const auto target = WebDavCredentialTarget(config);
+namespace {
+std::optional<std::string> ReadCredential(const std::string& target) {
 #ifdef _WIN32
   PCREDENTIALW credential = nullptr;
   if (!CredReadW(Wide(target).c_str(), CRED_TYPE_GENERIC, 0, &credential)) {
@@ -64,14 +64,13 @@ std::optional<std::string> ReadWebDavCredential(const WebDavConfig& config) {
   Unavailable(); return {};
 #endif
 }
-void StoreWebDavCredential(const WebDavConfig& config, const std::string& password) {
-  const auto target = WebDavCredentialTarget(config);
+void StoreCredential(const std::string& target, const std::string& password) {
   if (password.empty() || password.size() > 4096 || password.find('\0') != std::string::npos)
-    throw std::runtime_error("WebDAV password must contain 1-4096 bytes without NUL");
+    throw std::runtime_error("Remembered password must contain 1-4096 bytes without NUL");
 #ifdef _WIN32
-  auto name = Wide(target), username = Wide(config.username);
+  auto name = Wide(target);
   CREDENTIALW credential{}; credential.Type = CRED_TYPE_GENERIC; credential.TargetName = name.data();
-  credential.UserName = username.data(); credential.CredentialBlobSize = static_cast<DWORD>(password.size());
+  credential.CredentialBlobSize = static_cast<DWORD>(password.size());
   credential.CredentialBlob = reinterpret_cast<LPBYTE>(const_cast<char*>(password.data())); credential.Persist = CRED_PERSIST_LOCAL_MACHINE;
   if (!CredWriteW(&credential, 0)) Unavailable();
 #elif defined(__APPLE__)
@@ -89,8 +88,7 @@ void StoreWebDavCredential(const WebDavConfig& config, const std::string& passwo
   Unavailable();
 #endif
 }
-void DeleteWebDavCredential(const WebDavConfig& config) {
-  const auto target = WebDavCredentialTarget(config);
+void DeleteCredential(const std::string& target) {
 #ifdef _WIN32
   if (!CredDeleteW(Wide(target).c_str(), CRED_TYPE_GENERIC, 0) && GetLastError() != ERROR_NOT_FOUND) Unavailable();
 #elif defined(__APPLE__)
@@ -106,5 +104,25 @@ void DeleteWebDavCredential(const WebDavConfig& config) {
 #else
   Unavailable();
 #endif
+}
+
+}
+std::optional<std::string> ReadWebDavCredential(const WebDavConfig& config) {
+  return ReadCredential(WebDavCredentialTarget(config));
+}
+void StoreWebDavCredential(const WebDavConfig& config, const std::string& password) {
+  StoreCredential(WebDavCredentialTarget(config), password);
+}
+void DeleteWebDavCredential(const WebDavConfig& config) {
+  DeleteCredential(WebDavCredentialTarget(config));
+}
+std::optional<std::string> ReadWebDavBackupCredential(const WebDavConfig& config) {
+  return ReadCredential(WebDavBackupCredentialTarget(config));
+}
+void StoreWebDavBackupCredential(const WebDavConfig& config, const std::string& password) {
+  StoreCredential(WebDavBackupCredentialTarget(config), password);
+}
+void DeleteWebDavBackupCredential(const WebDavConfig& config) {
+  DeleteCredential(WebDavBackupCredentialTarget(config));
 }
 }

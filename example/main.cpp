@@ -528,6 +528,13 @@ bool CmdSync(kryptos::AccountManager& mgr, std::string url = "",
     }
     if (config.password.empty()) config.password = ReadHiddenInput("WebDAV password / app token: ");
     key = EnvValue("KRYPTOS_BACKUP_PASSWORD");
+    if (key.empty() && saved.remember_backup_password &&
+        kryptos::WebDavBackupCredentialTarget(config) == kryptos::WebDavBackupCredentialTarget(saved.connection)) {
+      try {
+        auto stored = kryptos::ReadWebDavBackupCredential(config);
+        if (stored) { key = *stored; kryptos::crypto::SecureClear(*stored); }
+      } catch (const std::exception& error) { std::cerr << error.what() << '\n'; }
+    }
     if (key.empty()) key = ReadHiddenInput("Backup password (same on all devices): ");
     const auto next = kryptos::SyncWebDav(mgr, config, key, GenerateNonce(), kryptos::WebDavHttpRequest, ResolveSyncConflicts);
     if (!SaveManager(next)) throw std::runtime_error("Remote synced but local save failed; retry sync after fixing local storage");
@@ -546,8 +553,9 @@ bool CmdSyncConfig(bool clear) {
     auto previous = kryptos::LoadWebDavConfig(file);
     if (clear) {
       if (previous.remember_password) kryptos::DeleteWebDavCredential(previous.connection);
+      if (previous.remember_backup_password) kryptos::DeleteWebDavBackupCredential(previous.connection);
       std::filesystem::remove(file);
-      std::cout << "Saved WebDAV settings and remembered password cleared. Account data was preserved.\n"; return true;
+      std::cout << "Saved WebDAV settings and remembered passwords cleared. Account data was preserved.\n"; return true;
     }
     auto saved = previous;
     auto ask = [](const char* label, const std::string& current) {
@@ -562,11 +570,24 @@ bool CmdSyncConfig(bool clear) {
     std::cout << "Remember WebDAV password in " << kryptos::CredentialBackendName() << "? [y/N]: ";
     std::string answer; if (!std::getline(std::cin, answer)) throw std::runtime_error("WebDAV setup cancelled");
     saved.remember_password = answer == "y" || answer == "Y";
+    std::string login_password, backup_password;
+    struct ClearSetupSecrets {
+      std::string& login; std::string& backup;
+      ~ClearSetupSecrets() { kryptos::crypto::SecureClear(login); kryptos::crypto::SecureClear(backup); }
+    } clear_secrets{login_password, backup_password};
+    if (saved.remember_password) login_password = ReadHiddenInput("WebDAV password / app token: ");
+    std::cout << "Remember backup encryption password in " << kryptos::CredentialBackendName() << "? [y/N]: ";
+    if (!std::getline(std::cin, answer)) throw std::runtime_error("WebDAV setup cancelled");
+    saved.remember_backup_password = answer == "y" || answer == "Y";
+    if (saved.remember_backup_password) backup_password = ReadHiddenInput("Backup password (same on all devices): ");
+    if (!std::cin) throw std::runtime_error("WebDAV setup cancelled");
     if (saved.remember_password) {
-      auto password = ReadHiddenInput("WebDAV password / app token: ");
-      try { kryptos::StoreWebDavCredential(saved.connection, password); }
-      catch (const std::exception& error) { saved.remember_password = false; std::cerr << error.what() << ". Settings will be saved without a password.\n"; }
-      kryptos::crypto::SecureClear(password);
+      try { kryptos::StoreWebDavCredential(saved.connection, login_password); }
+      catch (const std::exception& error) { saved.remember_password = false; std::cerr << error.what() << ". Settings will be saved without a login password.\n"; }
+    }
+    if (saved.remember_backup_password) {
+      try { kryptos::StoreWebDavBackupCredential(saved.connection, backup_password); }
+      catch (const std::exception& error) { saved.remember_backup_password = false; std::cerr << error.what() << ". Settings will be saved without a backup password.\n"; }
     }
     kryptos::SaveWebDavConfig(file, saved);
     if (previous.remember_password && (!saved.remember_password ||
@@ -574,7 +595,12 @@ bool CmdSyncConfig(bool clear) {
       try { kryptos::DeleteWebDavCredential(previous.connection); }
       catch (const std::exception& error) { std::cerr << "Old credential cleanup: " << error.what() << '\n'; }
     }
-    std::cout << "WebDAV settings saved locally. Run kryptos sync; backup password is never saved.\n";
+    if (previous.remember_backup_password && (!saved.remember_backup_password ||
+        kryptos::WebDavBackupCredentialTarget(previous.connection) != kryptos::WebDavBackupCredentialTarget(saved.connection))) {
+      try { kryptos::DeleteWebDavBackupCredential(previous.connection); }
+      catch (const std::exception& error) { std::cerr << "Old backup credential cleanup: " << error.what() << '\n'; }
+    }
+    std::cout << "WebDAV settings saved locally. Run kryptos sync; remembered passwords stay in the system credential store.\n";
     return true;
   } catch (const std::exception& error) { std::cerr << "WebDAV setup failed: " << error.what() << '\n'; return false; }
 }
