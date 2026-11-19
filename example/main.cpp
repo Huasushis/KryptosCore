@@ -558,38 +558,88 @@ bool CmdSyncConfig(bool clear) {
       std::cout << "Saved WebDAV settings and remembered passwords cleared. Account data was preserved.\n"; return true;
     }
     auto saved = previous;
+    std::cout << "Edit WebDAV settings: Enter keeps the current value.\n"
+              << "Type :cancel at any prompt (or 0 in non-password fields) to return without saving.\n";
     auto ask = [](const char* label, const std::string& current) {
       std::cout << label << " [" << current << "]: ";
       std::string input; if (!std::getline(std::cin, input)) throw std::runtime_error("WebDAV setup cancelled");
+      if (input == ":cancel" || input == "0") throw std::runtime_error("WebDAV setup cancelled");
       return input.empty() ? current : input;
+    };
+    auto ask_remember = [](const std::string& label, bool current) {
+      for (;;) {
+        std::cout << label << (current ? " [Y/n, 0 back]: " : " [y/N, 0 back]: ");
+        std::string answer;
+        if (!std::getline(std::cin, answer) || answer == ":cancel" || answer == "0")
+          throw std::runtime_error("WebDAV setup cancelled");
+        if (answer.empty()) return current;
+        if (answer == "y" || answer == "Y") return true;
+        if (answer == "n" || answer == "N") return false;
+        std::cout << "Enter y, n, or 0 to return.\n";
+      }
     };
     saved.connection.url = ask("WebDAV root URL", previous.connection.url);
     saved.connection.directory = ask("Sync directory", previous.connection.directory.empty() ? "Kryptos" : previous.connection.directory);
     saved.connection.username = ask("WebDAV username", previous.connection.username);
     kryptos::BuildWebDavPaths(saved.connection);
-    std::cout << "Remember WebDAV password in " << kryptos::CredentialBackendName() << "? [y/N]: ";
-    std::string answer; if (!std::getline(std::cin, answer)) throw std::runtime_error("WebDAV setup cancelled");
-    saved.remember_password = answer == "y" || answer == "Y";
+    const bool same_login = kryptos::WebDavCredentialTarget(saved.connection) == kryptos::WebDavCredentialTarget(previous.connection);
+    const bool same_backup = kryptos::WebDavBackupCredentialTarget(saved.connection) == kryptos::WebDavBackupCredentialTarget(previous.connection);
+    saved.remember_password = ask_remember("Remember WebDAV password in " + kryptos::CredentialBackendName() + "?", previous.remember_password);
     std::string login_password, backup_password;
     struct ClearSetupSecrets {
       std::string& login; std::string& backup;
       ~ClearSetupSecrets() { kryptos::crypto::SecureClear(login); kryptos::crypto::SecureClear(backup); }
     } clear_secrets{login_password, backup_password};
-    if (saved.remember_password) login_password = ReadHiddenInput("WebDAV password / app token: ");
-    std::cout << "Remember backup encryption password in " << kryptos::CredentialBackendName() << "? [y/N]: ";
-    if (!std::getline(std::cin, answer)) throw std::runtime_error("WebDAV setup cancelled");
-    saved.remember_backup_password = answer == "y" || answer == "Y";
-    if (saved.remember_backup_password) backup_password = ReadHiddenInput("Backup password (same on all devices): ");
-    if (!std::cin) throw std::runtime_error("WebDAV setup cancelled");
+    auto ask_password = [&](const char* label, bool can_keep) {
+      auto input = ReadHiddenInput(std::string(label) + (can_keep ? " [Enter keeps saved password, :cancel returns]: " : " [required, :cancel returns]: "));
+      if (!std::cin || input == ":cancel") { kryptos::crypto::SecureClear(input); throw std::runtime_error("WebDAV setup cancelled"); }
+      if (input.empty() && !can_keep) throw std::runtime_error("A password is required for this connection; no settings were changed");
+      return input;
+    };
+    if (saved.remember_password) login_password = ask_password("WebDAV password / app token:", previous.remember_password && same_login);
+    saved.remember_backup_password = ask_remember("Remember backup encryption password in " + kryptos::CredentialBackendName() + "?", previous.remember_backup_password);
+    if (saved.remember_backup_password) backup_password = ask_password("Backup password (same on all devices):", previous.remember_backup_password && same_backup);
+    const bool unchanged = same_login && same_backup && saved.remember_password == previous.remember_password &&
+        saved.remember_backup_password == previous.remember_backup_password && login_password.empty() && backup_password.empty();
+    if (unchanged) { std::cout << "No changes. Saved settings and passwords kept.\n"; return true; }
+    std::cout << "\nReview WebDAV settings\nURL: " << saved.connection.url << "\nDirectory: " << saved.connection.directory
+              << "\nUsername: " << saved.connection.username
+              << "\nWebDAV password: " << (!saved.remember_password ? "not remembered" : login_password.empty() ? "keep saved password" : "save new password")
+              << "\nBackup encryption password: " << (!saved.remember_backup_password ? "not remembered" : backup_password.empty() ? "keep saved password" : "save new password")
+              << "\nSave these changes? [y/N, 0 back]: " << std::flush;
+    std::string confirm;
+    if (!std::getline(std::cin, confirm) || (confirm != "y" && confirm != "Y")) {
+      std::cout << "Cancelled. Saved settings and passwords kept.\n"; return true;
+    }
+    std::optional<std::string> old_login, old_backup;
+    struct ClearOldSecrets {
+      std::optional<std::string>& login; std::optional<std::string>& backup;
+      ~ClearOldSecrets() { if (login) kryptos::crypto::SecureClear(*login); if (backup) kryptos::crypto::SecureClear(*backup); }
+    } clear_old{old_login, old_backup};
     if (saved.remember_password) {
-      try { kryptos::StoreWebDavCredential(saved.connection, login_password); }
-      catch (const std::exception& error) { saved.remember_password = false; std::cerr << error.what() << ". Settings will be saved without a login password.\n"; }
+      old_login = kryptos::ReadWebDavCredential(saved.connection);
+      if (login_password.empty() && !old_login) throw std::runtime_error("Saved WebDAV password is missing; enter it again. No settings were changed");
     }
     if (saved.remember_backup_password) {
-      try { kryptos::StoreWebDavBackupCredential(saved.connection, backup_password); }
-      catch (const std::exception& error) { saved.remember_backup_password = false; std::cerr << error.what() << ". Settings will be saved without a backup password.\n"; }
+      old_backup = kryptos::ReadWebDavBackupCredential(saved.connection);
+      if (backup_password.empty() && !old_backup) throw std::runtime_error("Saved backup password is missing; enter it again. No settings were changed");
     }
-    kryptos::SaveWebDavConfig(file, saved);
+    bool wrote_login = false, wrote_backup = false;
+    try {
+      if (saved.remember_password && !login_password.empty()) {
+        kryptos::StoreWebDavCredential(saved.connection, login_password); wrote_login = true;
+      }
+      if (saved.remember_backup_password && !backup_password.empty()) {
+        kryptos::StoreWebDavBackupCredential(saved.connection, backup_password); wrote_backup = true;
+      }
+      kryptos::SaveWebDavConfig(file, saved);
+    } catch (...) {
+      try {
+        if (wrote_login) { if (old_login) kryptos::StoreWebDavCredential(saved.connection, *old_login); else kryptos::DeleteWebDavCredential(saved.connection); }
+        if (wrote_backup) { if (old_backup) kryptos::StoreWebDavBackupCredential(saved.connection, *old_backup); else kryptos::DeleteWebDavBackupCredential(saved.connection); }
+      } catch (...) { std::cerr << "Credential rollback failed; review saved passwords before syncing.\n"; }
+      throw;
+    }
     if (previous.remember_password && (!saved.remember_password ||
         kryptos::WebDavCredentialTarget(previous.connection) != kryptos::WebDavCredentialTarget(saved.connection))) {
       try { kryptos::DeleteWebDavCredential(previous.connection); }
@@ -652,7 +702,7 @@ void InteractiveMode(kryptos::AccountManager& mgr) {
               << "  6. Import data\n"
               << "  7. WebDAV sync\n"
               << "  8. Check / install update\n"
-              << "  9. Toggle startup update checks\n"
+              << "  9. Startup update checks (" << (AutoUpdateCheck() ? "on" : "off") << ")\n"
               << "  10. Save / edit WebDAV settings\n"
               << "  11. Clear saved WebDAV settings\n"
               << "  0. Exit\n"
@@ -696,12 +746,26 @@ void InteractiveMode(kryptos::AccountManager& mgr) {
 
     } else if (choice == "7") {
       CmdSync(mgr);
-    } else if (choice == "10" || choice == "11") {
-      CmdSyncConfig(choice == "11");
+    } else if (choice == "10") {
+      CmdSyncConfig(false);
+    } else if (choice == "11") {
+      std::cout << "Clear saved WebDAV settings and both remembered passwords? [y/N, 0 back]: ";
+      std::string confirm;
+      if (std::getline(std::cin, confirm) && (confirm == "y" || confirm == "Y")) CmdSyncConfig(true);
+      else std::cout << "Cancelled. Saved settings and passwords kept.\n";
     } else if (choice == "8" || choice == "9") {
       try {
         if (choice == "8") { if (CmdUpdate(false)) break; }
-        else { const bool enabled = !AutoUpdateCheck(); SetAutoUpdateCheck(enabled); std::cout << "Startup update checks " << (enabled ? "on" : "off") << ".\n"; }
+        else {
+          const bool current = AutoUpdateCheck();
+          std::cout << "Check for a new version when the program starts; installation always requires confirmation.\n"
+                    << "Startup update checks are " << (current ? "on" : "off") << ".\n"
+                    << "Enter on or off to change, or press Enter / 0 to return: ";
+          std::string setting;
+          if (std::getline(std::cin, setting) && (setting == "on" || setting == "off")) {
+            SetAutoUpdateCheck(setting == "on"); std::cout << "Startup update checks " << setting << ".\n";
+          } else { std::cout << "No change.\n"; }
+        }
       } catch (const std::exception& e) { std::cerr << "Update failed: " << e.what() << "\n"; }
     } else {
       std::cout << "Unknown option. Enter 0 to exit.\n";

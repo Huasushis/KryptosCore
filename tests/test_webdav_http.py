@@ -135,11 +135,25 @@ try:
         before = conflict_data
         # Configure a device once, then sync without repeating endpoint arguments.
         setup = subprocess.run([str(devices[0]), 'sync-config'],
-            input=f'http://127.0.0.1:{server.server_port}/dav/\nBackups/My vault\nuser\nn\nn\n',
+            input=f'http://127.0.0.1:{server.server_port}/dav/\nBackups/My vault\nuser\nn\nn\ny\n',
             text=True, capture_output=True, timeout=20)
         assert setup.returncode == 0, setup.stderr
         config_path = devices[0].parent / 'kryptos-webdav.conf'
         assert config_path.exists() and b'token' not in config_path.read_bytes()
+        saved_config = config_path.read_bytes()
+        no_changes = subprocess.run([str(devices[0]), 'sync-config'], input='\n' * 5,
+            text=True, capture_output=True, timeout=20)
+        assert no_changes.returncode == 0 and 'No changes' in no_changes.stdout
+        assert config_path.read_bytes() == saved_config
+        for cancelled_input in (':cancel\n', '\n0\n', '\n\n:cancel\n', '\n\n\n0\n', '\n\n\nn\n:cancel\n'):
+            cancelled = subprocess.run([str(devices[0]), 'sync-config'], input=cancelled_input,
+                text=True, capture_output=True, timeout=20)
+            assert cancelled.returncode != 0 and 'cancelled' in cancelled.stderr
+            assert config_path.read_bytes() == saved_config
+        declined = subprocess.run([str(devices[0]), 'sync-config'],
+            input='https://different.example/dav\n\n\nn\nn\n\n', text=True, capture_output=True, timeout=20)
+        assert declined.returncode == 0 and 'Cancelled' in declined.stdout
+        assert config_path.read_bytes() == saved_config
         env = dict(os.environ, KRYPTOS_WEBDAV_PASSWORD='token', KRYPTOS_BACKUP_PASSWORD='backup-password')
         for name in ('KRYPTOS_WEBDAV_URL', 'KRYPTOS_WEBDAV_DIRECTORY', 'KRYPTOS_WEBDAV_USERNAME'):
             env.pop(name, None)
@@ -147,16 +161,51 @@ try:
         assert reused.returncode == 0, reused.stderr
         if os.environ.get('KRYPTOS_TEST_SYSTEM_CREDENTIALS'):
             setup = subprocess.run([str(devices[0]), 'sync-config'],
-                input='\n\n\ny\ntoken\ny\nbackup-password\n', text=True, capture_output=True, timeout=20)
+                input='\n\n\ny\ntoken\ny\nbackup-password\ny\n', text=True, capture_output=True, timeout=20)
             assert setup.returncode == 0, setup.stderr
             assert 'unavailable' not in setup.stderr
             assert b'token' not in config_path.read_bytes() and b'backup-password' not in config_path.read_bytes()
             no_secrets = dict(env)
             no_secrets.pop('KRYPTOS_WEBDAV_PASSWORD', None)
             no_secrets.pop('KRYPTOS_BACKUP_PASSWORD', None)
+            saved_config = config_path.read_bytes()
+            no_changes = subprocess.run([str(devices[0]), 'sync-config'], input='\n' * 7,
+                text=True, capture_output=True, timeout=20)
+            assert no_changes.returncode == 0 and 'No changes' in no_changes.stdout
+            assert config_path.read_bytes() == saved_config
+            # Cancelling after entering a new password must not overwrite either saved secret.
+            cancelled = subprocess.run([str(devices[0]), 'sync-config'],
+                input='\n\n\n\nreplacement-token\n\n:cancel\n', text=True, capture_output=True, timeout=20)
+            assert cancelled.returncode != 0 and 'cancelled' in cancelled.stderr
+            assert 'replacement-token' not in cancelled.stdout + cancelled.stderr
+            assert config_path.read_bytes() == saved_config
+            # Declining a change to the remember switches must not delete stored passwords.
+            declined = subprocess.run([str(devices[0]), 'sync-config'],
+                input='\n\n\nn\nn\n\n', text=True, capture_output=True, timeout=20)
+            assert declined.returncode == 0 and 'Cancelled' in declined.stdout
+            assert config_path.read_bytes() == saved_config
+            # Defaults never carry credentials to a different endpoint or backup directory.
+            for changed_input in ('https://different.example/dav\n\n\n\n\n',
+                                  '\nDifferent backup\n\n\n\n\n\n'):
+                rejected = subprocess.run([str(devices[0]), 'sync-config'], input=changed_input,
+                    text=True, capture_output=True, timeout=20)
+                assert rejected.returncode != 0 and 'required' in rejected.stderr
+                assert config_path.read_bytes() == saved_config
             reused = subprocess.run([str(devices[0]), 'sync'], env=no_secrets, input='', text=True, capture_output=True, timeout=45)
             assert reused.returncode == 0, reused.stderr
             assert 'password / app token:' not in reused.stderr and 'Backup password (' not in reused.stderr
+        # Opening update settings and pressing Enter or 0 never toggles the preference.
+        subprocess.run([str(devices[0]), 'update', '--auto', 'off'], check=True, capture_output=True, timeout=20)
+        settings_file = devices[0].parent / 'kryptos-update-settings.txt'
+        unchanged = settings_file.read_bytes()
+        for action in ('9', '11'):
+            for back in ('', '0'):
+                menu = subprocess.run([str(devices[0])], input=action + '\n' + back + '\n0\n',
+                    text=True, capture_output=True, timeout=20)
+                assert menu.returncode == 0
+                assert settings_file.read_bytes() == unchanged and config_path.exists()
+        menu = subprocess.run([str(devices[0])], input='9\non\n0\n', text=True, capture_output=True, timeout=20)
+        assert menu.returncode == 0 and settings_file.read_text() == 'auto-check=on\n'
         # A different account must never receive a remembered password.
         cleared = subprocess.run([str(devices[0]), 'sync-config', '--clear'], capture_output=True, text=True, timeout=20)
         assert cleared.returncode == 0, cleared.stderr

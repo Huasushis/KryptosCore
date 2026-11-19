@@ -2,7 +2,7 @@
 # Licensed under the MIT License. See LICENSE file for details.
 
 cmake_minimum_required(VERSION 3.14)
-project(KryptosCore VERSION 1.2.0 LANGUAGES CXX)
+project(KryptosCore VERSION 1.2.2 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)

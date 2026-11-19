@@ -9,6 +9,18 @@ settings. Settings are stored in `kryptos-webdav.conf` next to the executable an
 are preserved when only the executable is upgraded. The fields are encoded to
 support special characters; this file is not encrypted and contains no password.
 
+When editing, Enter keeps each current value, including both remember switches
+and passwords already saved for that same connection. An unchanged edit does
+not write anything. Type `:cancel` at any prompt, or `0` in a non-password field,
+to return without saving. Changes are reviewed and require explicit `y` before
+any configuration or credentials are written. A new server/account requires a
+new login password; changing the directory also requires its backup password.
+Turning off remembering only deletes the stored password after confirmation.
+
+Menu 9 displays whether startup update checks are on. Opening it changes nothing:
+enter `on` or `off` to change, or Enter / `0` to go back. Startup checks only notify
+you about new versions; installation requires separate confirmation.
+
 Setup offers to remember the WebDAV login password in Windows Credential Manager,
 macOS Keychain, or Linux Secret Service (libsecret and an unlocked desktop keyring
 are required). If the credential store is unavailable, settings can still be saved
