@@ -12,6 +12,7 @@ jobs:
   # Determine next version from commit messages (Conventional Commits)
   # ---------------------------------------------------------------------------
   version:
+    needs: test
     runs-on: ubuntu-latest
     outputs:
       new_tag: ${{ steps.bump.outputs.new_tag }}
@@ -36,6 +37,7 @@ jobs:
   # ---------------------------------------------------------------------------
   test:
     strategy:
+      fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
     runs-on: ${{ matrix.os }}
@@ -60,6 +62,10 @@ jobs:
         run: ctest --output-on-failure -C Release
         env:
           KRYPTOS_TEST_SYSTEM_CREDENTIALS: ${{ runner.os == 'Windows' && '1' || '' }}
+
+      - name: Report test failure
+        if: failure()
+        run: python tests/report_failure.py
 
   # ---------------------------------------------------------------------------
   # Build matrix: Windows / Linux / macOS
