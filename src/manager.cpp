@@ -188,7 +188,10 @@ bool AccountManager::DeserializeFromText(const std::string& text) {
   if (!std::getline(iss, line)) return false;
   size_t count = 0;
   try {
+    if (line.empty() || line.find_first_not_of("0123456789") != std::string::npos) return false;
     count = std::stoul(line);
+    // Each entry needs at least five fields. Bound allocation by input size.
+    if (count > text.size() / 5) return false;
   } catch (...) {
     return false;
   }

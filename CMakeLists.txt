@@ -34,6 +34,7 @@ add_library(kryptos_core STATIC
     src/core.cpp
     src/crypto_utils.cpp
     src/manager.cpp
+    src/webdav.cpp
 )
 
 target_include_directories(kryptos_core
@@ -54,7 +55,15 @@ endif()
 # ---------------------------------------------------------------------------
 
 add_executable(kryptos example/main.cpp)
-target_link_libraries(kryptos PRIVATE kryptos_core)
+add_library(kryptos_webdav_http STATIC src/webdav_http.cpp)
+target_link_libraries(kryptos_webdav_http PUBLIC kryptos_core)
+if(WIN32)
+    target_link_libraries(kryptos_webdav_http PRIVATE winhttp)
+else()
+    find_package(CURL REQUIRED)
+    target_link_libraries(kryptos_webdav_http PRIVATE CURL::libcurl)
+endif()
+target_link_libraries(kryptos PRIVATE kryptos_webdav_http)
 
 if(MSVC)
     target_compile_options(kryptos PRIVATE /W4)
@@ -83,6 +92,14 @@ else()
 endif()
 
 add_test(NAME KryptosCoreTests COMMAND kryptos_tests)
+add_executable(kryptos_webdav_tests tests/test_webdav.cpp)
+target_link_libraries(kryptos_webdav_tests PRIVATE kryptos_core)
+add_test(NAME KryptosWebDavTests COMMAND kryptos_webdav_tests)
+find_package(Python3 COMPONENTS Interpreter QUIET)
+if(Python3_Interpreter_FOUND)
+    add_test(NAME KryptosWebDavHttpTests COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_webdav_http.py --binary $<TARGET_FILE:kryptos>)
+endif()
 
 # ---------------------------------------------------------------------------
 # Install

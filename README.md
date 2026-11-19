@@ -25,6 +25,11 @@ Passwords are never stored — they are regenerated on-the-fly from a master pre
 
 ## Quick Start
 
+WebDAV sync is available via `kryptos sync [url] [directory] [username]` and menu
+option 7. Missing directories are created automatically; encrypted metadata is
+shared with KryptosMobile. See [WebDAV sync](docs/WEBDAV.md) for setup, merge and
+conflict behavior, server requirements and build dependencies.
+
 ### Build
 
 ```bash
@@ -144,7 +149,7 @@ KryptosCore/
 
 - **C++17** (for `<filesystem>`)
 - **picosha2** (header-only SHA-256, MIT license, fetched automatically via CMake FetchContent)
-- No other external libraries.
+- CLI networking uses WinHTTP on Windows and libcurl on Linux/macOS.
 
 ## License
 
@@ -294,7 +299,7 @@ KryptosCore/
 
 - **C++17**（使用 `<filesystem>`）
 - **picosha2**（纯头文件 SHA-256，MIT 协议，通过 CMake FetchContent 自动获取）
-- 无其他外部依赖。
+- 命令行 WebDAV 网络访问在 Windows 使用系统 WinHTTP，在 Linux/macOS 使用 libcurl。
 
 ## 许可证
 

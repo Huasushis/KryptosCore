@@ -42,11 +42,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Install libcurl headers
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libcurl4-openssl-dev
+
       - name: Configure CMake
         run: cmake -B build -DCMAKE_BUILD_TYPE=Release
 
       - name: Build tests
-        run: cmake --build build --config Release --target kryptos_tests
+        run: cmake --build build --config Release
 
       - name: Run tests
         working-directory: build
@@ -74,6 +78,10 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
+
+      - name: Install libcurl headers
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libcurl4-openssl-dev
 
       - name: Configure CMake
         run: cmake -B build -DCMAKE_BUILD_TYPE=Release

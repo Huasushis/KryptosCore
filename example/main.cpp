@@ -28,6 +28,7 @@
 #include "kryptos/core.h"
 #include "kryptos/crypto_utils.h"
 #include "kryptos/manager.h"
+#include "kryptos/webdav.h"
 
 // ---------------------------------------------------------------------------
 // Platform-specific helpers
@@ -79,21 +80,23 @@ std::string ReadHiddenInput(const std::string& prompt) {
   std::cerr << prompt;
 #ifdef _WIN32
   HANDLE hStdin = GetStdHandle(STD_INPUT_HANDLE);
-  DWORD mode;
-  GetConsoleMode(hStdin, &mode);
-  SetConsoleMode(hStdin, mode & ~ENABLE_ECHO_INPUT);
+  DWORD mode = 0;
+  const bool console = GetConsoleMode(hStdin, &mode) != 0;
+  if (console) SetConsoleMode(hStdin, mode & ~ENABLE_ECHO_INPUT);
   std::string input;
   std::getline(std::cin, input);
-  SetConsoleMode(hStdin, mode);
+  if (console) SetConsoleMode(hStdin, mode);
 #else
   struct termios oldt, newt;
-  tcgetattr(STDIN_FILENO, &oldt);
-  newt = oldt;
-  newt.c_lflag &= ~static_cast<tcflag_t>(ECHO);
-  tcsetattr(STDIN_FILENO, TCSANOW, &newt);
+  const bool console = tcgetattr(STDIN_FILENO, &oldt) == 0;
+  if (console) {
+    newt = oldt;
+    newt.c_lflag &= ~static_cast<tcflag_t>(ECHO);
+    tcsetattr(STDIN_FILENO, TCSANOW, &newt);
+  }
   std::string input;
   std::getline(std::cin, input);
-  tcsetattr(STDIN_FILENO, TCSANOW, &oldt);
+  if (console) tcsetattr(STDIN_FILENO, TCSANOW, &oldt);
 #endif
   std::cerr << "\n";
   return input;
@@ -155,12 +158,10 @@ std::string GenerateUuid(size_t length = 32) {
 
 std::string GenerateNonce(size_t length = 16) {
   std::random_device rd;
-  std::mt19937 gen(rd());
-  std::uniform_int_distribution<int> dist(0, 255);
 
   std::string nonce(length, '\0');
   for (size_t i = 0; i < length; ++i) {
-    nonce[i] = static_cast<char>(dist(gen));
+    nonce[i] = static_cast<char>(rd() & 0xff);
   }
   return nonce;
 }
@@ -187,13 +188,29 @@ bool LoadManager(kryptos::AccountManager& mgr) {
 
 bool SaveManager(const kryptos::AccountManager& mgr) {
   fs::path path = DataFilePath();
-  std::ofstream ofs(path, std::ios::binary | std::ios::trunc);
+  fs::path temporary = path;
+  temporary += ".tmp";
+  std::ofstream ofs(temporary, std::ios::binary | std::ios::trunc);
   if (!ofs) {
     std::cerr << "Error: cannot write to " << path << "\n";
     return false;
   }
   ofs << mgr.SerializeToText();
-  return ofs.good();
+  ofs.close();
+  if (!ofs) return false;
+#ifdef _WIN32
+  if (MoveFileExW(temporary.c_str(), path.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) return true;
+  std::error_code cleanup;
+  fs::remove(temporary, cleanup);
+  return false;
+#else
+  std::error_code error;
+  fs::rename(temporary, path, error);
+  if (!error) return true;
+  std::error_code cleanup;
+  fs::remove(temporary, cleanup);
+  return false;
+#endif
 }
 
 // ---- Print helpers --------------------------------------------------------
@@ -213,6 +230,7 @@ void PrintHelp() {
       << "  kryptos delete <web> [user]      Delete an entry\n"
       << "  kryptos export [file]            Export data (Base64)\n"
       << "  kryptos import <file>            Import data (Base64)\n"
+      << "  kryptos sync [url] [dir] [user]  Merge encrypted metadata via WebDAV\n"
       << "  kryptos help                     Show this help\n"
       << "\n"
       << "When generating a password, you will be prompted for a prefix\n"
@@ -430,6 +448,44 @@ void CmdImport(kryptos::AccountManager& mgr, const std::string& file_path) {
   }
 }
 
+std::string EnvValue(const char* name) {
+  const char* value = std::getenv(name);
+  return value ? value : "";
+}
+
+bool CmdSync(kryptos::AccountManager& mgr, std::string url = "",
+             std::string directory = "", std::string username = "") {
+  kryptos::WebDavConfig config;
+  config.url = url.empty() ? EnvValue("KRYPTOS_WEBDAV_URL") : url;
+  config.directory = directory.empty() ? EnvValue("KRYPTOS_WEBDAV_DIRECTORY") : directory;
+  config.username = username.empty() ? EnvValue("KRYPTOS_WEBDAV_USERNAME") : username;
+  if (config.url.empty()) { std::cout << "WebDAV root URL: "; std::getline(std::cin, config.url); }
+  if (config.directory.empty()) {
+    std::cout << "Sync directory [Kryptos]: "; std::getline(std::cin, config.directory);
+    if (config.directory.empty()) config.directory = "Kryptos";
+  }
+  if (config.username.empty()) { std::cout << "WebDAV username: "; std::getline(std::cin, config.username); }
+  config.password = EnvValue("KRYPTOS_WEBDAV_PASSWORD");
+  if (config.password.empty()) config.password = ReadHiddenInput("WebDAV password / app token: ");
+  std::string key = EnvValue("KRYPTOS_BACKUP_PASSWORD");
+  if (key.empty()) key = ReadHiddenInput("Backup password (same on all devices): ");
+  struct ClearSecrets {
+    std::string& password;
+    std::string& key;
+    ~ClearSecrets() { kryptos::crypto::SecureClear(password); kryptos::crypto::SecureClear(key); }
+  } clear{config.password, key};
+  try {
+    const auto next = kryptos::SyncWebDav(mgr, config, key, GenerateNonce(), kryptos::WebDavHttpRequest);
+    if (!SaveManager(next)) throw std::runtime_error("Remote synced but local save failed; retry sync after fixing local storage");
+    mgr = next;
+    std::cout << "WebDAV sync complete. " << mgr.Size() << " entries. Local deletions are not propagated.\n";
+    return true;
+  } catch (const std::exception& ex) {
+    std::cerr << "WebDAV sync failed: " << ex.what() << "\n";
+    return false;
+  }
+}
+
 // ---- Interactive mode -----------------------------------------------------
 
 void InteractiveMode(kryptos::AccountManager& mgr) {
@@ -442,6 +498,7 @@ void InteractiveMode(kryptos::AccountManager& mgr) {
               << "  4. Delete entry\n"
               << "  5. Export data\n"
               << "  6. Import data\n"
+              << "  7. WebDAV sync\n"
               << "  0. Exit\n"
               << "\n> ";
 
@@ -481,6 +538,8 @@ void InteractiveMode(kryptos::AccountManager& mgr) {
       std::getline(std::cin, file);
       if (!file.empty()) CmdImport(mgr, file);
 
+    } else if (choice == "7") {
+      CmdSync(mgr);
     } else {
       std::cout << "Unknown option. Enter 0 to exit.\n";
     }
@@ -546,6 +605,10 @@ int main(int argc, char* argv[]) {
   }
 
   // ---- Default: treat first argument as webname ---------------------------
+  if (cmd == "sync") {
+    if (argc > 5) { std::cerr << "Usage: kryptos sync [url] [directory] [username]\n"; return 1; }
+    return CmdSync(mgr, argc > 2 ? argv[2] : "", argc > 3 ? argv[3] : "", argc > 4 ? argv[4] : "") ? 0 : 1;
+  }
   std::string webname = cmd;
   std::string username_hint = (argc >= 3) ? argv[2] : "";
 
