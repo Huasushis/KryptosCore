@@ -25,6 +25,9 @@ jobs:
       - run: ctest --test-dir build --output-on-failure -C Release
         env:
           KRYPTOS_TEST_SYSTEM_CREDENTIALS: ${{ runner.os == 'Windows' && '1' || '' }}
+      - name: Report test failure
+        if: failure()
+        run: python tests/report_failure.py
       - uses: actions/upload-artifact@v4
         with:
           name: KryptosCore-${{ matrix.os }}
