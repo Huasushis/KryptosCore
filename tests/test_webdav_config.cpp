@@ -49,7 +49,8 @@ int main() {
       { std::ofstream output(file, std::ios::binary | std::ios::trunc); output << bad; }
       Throws([&] { kryptos::LoadWebDavConfig(file); });
     }
-    if (std::getenv("KRYPTOS_TEST_SYSTEM_CREDENTIALS")) {
+    const auto test_credentials = std::getenv("KRYPTOS_TEST_SYSTEM_CREDENTIALS");
+    if (test_credentials && std::string(test_credentials) == "1") {
       kryptos::WebDavConfig test{"https://test-" + std::to_string(std::random_device{}()) + ".invalid", "Kryptos", "credential-test", ""};
       struct Clear { kryptos::WebDavConfig config; ~Clear() { try { kryptos::DeleteWebDavCredential(config); kryptos::DeleteWebDavBackupCredential(config); } catch (...) {} } } clear{test};
       Check(!kryptos::ReadWebDavCredential(test));
