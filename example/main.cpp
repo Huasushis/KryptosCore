@@ -30,6 +30,7 @@
 #include "kryptos/manager.h"
 #include "kryptos/webdav.h"
 #include "kryptos/update.h"
+#include "kryptos/webdav_config.h"
 
 // ---------------------------------------------------------------------------
 // Platform-specific helpers
@@ -234,6 +235,7 @@ void PrintHelp() {
       << "  kryptos export [file]            Export data (Base64)\n"
       << "  kryptos import <file>            Import data (Base64)\n"
       << "  kryptos sync [url] [dir] [user]  Merge encrypted metadata via WebDAV\n"
+      << "  kryptos sync-config [--clear]     Save / clear WebDAV settings locally\n"
       << "  kryptos version                  Show installed version\n"
       << "  kryptos update [--check]          Check / install latest stable release\n"
       << "  kryptos update --auto on|off      Startup update checks (no auto install)\n"
@@ -495,25 +497,38 @@ std::vector<kryptos::WebDavChoice> ResolveSyncConflicts(
 bool CmdSync(kryptos::AccountManager& mgr, std::string url = "",
              std::string directory = "", std::string username = "") {
   kryptos::WebDavConfig config;
-  config.url = url.empty() ? EnvValue("KRYPTOS_WEBDAV_URL") : url;
-  config.directory = directory.empty() ? EnvValue("KRYPTOS_WEBDAV_DIRECTORY") : directory;
-  config.username = username.empty() ? EnvValue("KRYPTOS_WEBDAV_USERNAME") : username;
-  if (config.url.empty()) { std::cout << "WebDAV root URL: "; std::getline(std::cin, config.url); }
-  if (config.directory.empty()) {
-    std::cout << "Sync directory [Kryptos]: "; std::getline(std::cin, config.directory);
-    if (config.directory.empty()) config.directory = "Kryptos";
-  }
-  if (config.username.empty()) { std::cout << "WebDAV username: "; std::getline(std::cin, config.username); }
-  config.password = EnvValue("KRYPTOS_WEBDAV_PASSWORD");
-  if (config.password.empty()) config.password = ReadHiddenInput("WebDAV password / app token: ");
-  std::string key = EnvValue("KRYPTOS_BACKUP_PASSWORD");
-  if (key.empty()) key = ReadHiddenInput("Backup password (same on all devices): ");
+  std::string key;
   struct ClearSecrets {
     std::string& password;
     std::string& key;
     ~ClearSecrets() { kryptos::crypto::SecureClear(password); kryptos::crypto::SecureClear(key); }
   } clear{config.password, key};
   try {
+    const auto saved = kryptos::LoadWebDavConfig(GetExeDir() / "kryptos-webdav.conf");
+    auto setting = [](const std::string& argument, const char* env, const std::string& fallback) {
+      if (!argument.empty()) return argument;
+      const auto value = EnvValue(env); return value.empty() ? fallback : value;
+    };
+    config.url = setting(url, "KRYPTOS_WEBDAV_URL", saved.connection.url);
+    config.directory = setting(directory, "KRYPTOS_WEBDAV_DIRECTORY", saved.connection.directory);
+    config.username = setting(username, "KRYPTOS_WEBDAV_USERNAME", saved.connection.username);
+    if (config.url.empty()) { std::cout << "WebDAV root URL: "; std::getline(std::cin, config.url); }
+    if (config.directory.empty()) {
+      std::cout << "Sync directory [Kryptos]: "; std::getline(std::cin, config.directory);
+      if (config.directory.empty()) config.directory = "Kryptos";
+    }
+    if (config.username.empty()) { std::cout << "WebDAV username: "; std::getline(std::cin, config.username); }
+    config.password = EnvValue("KRYPTOS_WEBDAV_PASSWORD");
+    if (config.password.empty() && saved.remember_password &&
+        kryptos::WebDavCredentialTarget(config) == kryptos::WebDavCredentialTarget(saved.connection)) {
+      try {
+        auto stored = kryptos::ReadWebDavCredential(config);
+        if (stored) { config.password = *stored; kryptos::crypto::SecureClear(*stored); }
+      } catch (const std::exception& error) { std::cerr << error.what() << '\n'; }
+    }
+    if (config.password.empty()) config.password = ReadHiddenInput("WebDAV password / app token: ");
+    key = EnvValue("KRYPTOS_BACKUP_PASSWORD");
+    if (key.empty()) key = ReadHiddenInput("Backup password (same on all devices): ");
     const auto next = kryptos::SyncWebDav(mgr, config, key, GenerateNonce(), kryptos::WebDavHttpRequest, ResolveSyncConflicts);
     if (!SaveManager(next)) throw std::runtime_error("Remote synced but local save failed; retry sync after fixing local storage");
     mgr = next;
@@ -523,6 +538,45 @@ bool CmdSync(kryptos::AccountManager& mgr, std::string url = "",
     std::cerr << "WebDAV sync failed: " << ex.what() << "\n";
     return false;
   }
+}
+
+bool CmdSyncConfig(bool clear) {
+  try {
+    const auto file = GetExeDir() / "kryptos-webdav.conf";
+    auto previous = kryptos::LoadWebDavConfig(file);
+    if (clear) {
+      if (previous.remember_password) kryptos::DeleteWebDavCredential(previous.connection);
+      std::filesystem::remove(file);
+      std::cout << "Saved WebDAV settings and remembered password cleared. Account data was preserved.\n"; return true;
+    }
+    auto saved = previous;
+    auto ask = [](const char* label, const std::string& current) {
+      std::cout << label << " [" << current << "]: ";
+      std::string input; if (!std::getline(std::cin, input)) throw std::runtime_error("WebDAV setup cancelled");
+      return input.empty() ? current : input;
+    };
+    saved.connection.url = ask("WebDAV root URL", previous.connection.url);
+    saved.connection.directory = ask("Sync directory", previous.connection.directory.empty() ? "Kryptos" : previous.connection.directory);
+    saved.connection.username = ask("WebDAV username", previous.connection.username);
+    kryptos::BuildWebDavPaths(saved.connection);
+    std::cout << "Remember WebDAV password in " << kryptos::CredentialBackendName() << "? [y/N]: ";
+    std::string answer; if (!std::getline(std::cin, answer)) throw std::runtime_error("WebDAV setup cancelled");
+    saved.remember_password = answer == "y" || answer == "Y";
+    if (saved.remember_password) {
+      auto password = ReadHiddenInput("WebDAV password / app token: ");
+      try { kryptos::StoreWebDavCredential(saved.connection, password); }
+      catch (const std::exception& error) { saved.remember_password = false; std::cerr << error.what() << ". Settings will be saved without a password.\n"; }
+      kryptos::crypto::SecureClear(password);
+    }
+    kryptos::SaveWebDavConfig(file, saved);
+    if (previous.remember_password && (!saved.remember_password ||
+        kryptos::WebDavCredentialTarget(previous.connection) != kryptos::WebDavCredentialTarget(saved.connection))) {
+      try { kryptos::DeleteWebDavCredential(previous.connection); }
+      catch (const std::exception& error) { std::cerr << "Old credential cleanup: " << error.what() << '\n'; }
+    }
+    std::cout << "WebDAV settings saved locally. Run kryptos sync; backup password is never saved.\n";
+    return true;
+  } catch (const std::exception& error) { std::cerr << "WebDAV setup failed: " << error.what() << '\n'; return false; }
 }
 
 // ---- Interactive mode -----------------------------------------------------
@@ -573,6 +627,8 @@ void InteractiveMode(kryptos::AccountManager& mgr) {
               << "  7. WebDAV sync\n"
               << "  8. Check / install update\n"
               << "  9. Toggle startup update checks\n"
+              << "  10. Save / edit WebDAV settings\n"
+              << "  11. Clear saved WebDAV settings\n"
               << "  0. Exit\n"
               << "\n> ";
 
@@ -614,6 +670,8 @@ void InteractiveMode(kryptos::AccountManager& mgr) {
 
     } else if (choice == "7") {
       CmdSync(mgr);
+    } else if (choice == "10" || choice == "11") {
+      CmdSyncConfig(choice == "11");
     } else if (choice == "8" || choice == "9") {
       try {
         if (choice == "8") { if (CmdUpdate(false)) break; }
@@ -632,6 +690,12 @@ void InteractiveMode(kryptos::AccountManager& mgr) {
 // ===========================================================================
 
 int main(int argc, char* argv[]) {
+  if (argc >= 2 && std::string(argv[1]) == "sync-config") {
+    if (argc > 3 || (argc == 3 && std::string(argv[2]) != "--clear")) {
+      std::cerr << "Usage: kryptos sync-config [--clear]\n"; return 1;
+    }
+    return CmdSyncConfig(argc == 3) ? 0 : 1;
+  }
   if (argc >= 2 && (std::string(argv[1]) == "version" || std::string(argv[1]) == "--version")) {
     std::cout << "KryptosCore " << kryptos::CurrentVersion() << "\n"; return 0;
   }

@@ -133,6 +133,22 @@ try:
         assert adopted.returncode == 0, adopted.stderr
         assert sorted((devices[1].parent / 'kryptos_data.dat').read_bytes().splitlines()[2:]) == sorted(conflict_data.splitlines()[2:])
         before = conflict_data
+        # Configure a device once, then sync without repeating endpoint arguments.
+        setup = subprocess.run([str(devices[0]), 'sync-config'],
+            input=f'http://127.0.0.1:{server.server_port}/dav/\nBackups/My vault\nuser\nn\n',
+            text=True, capture_output=True, timeout=20)
+        assert setup.returncode == 0, setup.stderr
+        config_path = devices[0].parent / 'kryptos-webdav.conf'
+        assert config_path.exists() and b'token' not in config_path.read_bytes()
+        env = dict(os.environ, KRYPTOS_WEBDAV_PASSWORD='token', KRYPTOS_BACKUP_PASSWORD='backup-password')
+        for name in ('KRYPTOS_WEBDAV_URL', 'KRYPTOS_WEBDAV_DIRECTORY', 'KRYPTOS_WEBDAV_USERNAME'):
+            env.pop(name, None)
+        reused = subprocess.run([str(devices[0]), 'sync'], env=env, input='', text=True, capture_output=True, timeout=45)
+        assert reused.returncode == 0, reused.stderr
+        # A different account must never receive a remembered password.
+        cleared = subprocess.run([str(devices[0]), 'sync-config', '--clear'], capture_output=True, text=True, timeout=20)
+        assert cleared.returncode == 0, cleared.stderr
+        assert not config_path.exists() and data.read_bytes() == before
         state['body'] = b'corrupt'
         assert sync(devices[0]).returncode != 0
         assert data.read_bytes() == before and state['body'] == b'corrupt'

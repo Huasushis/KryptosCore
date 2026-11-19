@@ -30,7 +30,7 @@ struct Handle {
   Handle(const Handle&) = delete;
   Handle& operator=(const Handle&) = delete;
 };
-void Check(BOOL ok) { if (!ok) throw std::runtime_error("WebDAV network or TLS request failed"); }
+void Check(BOOL ok) { if (!ok) throw std::runtime_error("WebDAV network or TLS request failed (Windows error " + std::to_string(GetLastError()) + ")"); }
 #else
 size_t BodyCallback(char* data, size_t size, size_t count, void* context) {
   auto& body = *static_cast<std::string*>(context);
@@ -68,7 +68,7 @@ DavResponse WebDavHttpRequest(const std::string& url, const std::string& method,
   const std::wstring host(parts.lpszHostName, parts.dwHostNameLength);
   std::wstring path(parts.lpszUrlPath, parts.dwUrlPathLength);
   if (parts.dwExtraInfoLength) path.append(parts.lpszExtraInfo, parts.dwExtraInfoLength);
-  Handle session(WinHttpOpen(L"KryptosCore/1.0", WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,
+  Handle session(WinHttpOpen(L"KryptosCore/1.0", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,
       WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0));
   Check(WinHttpSetTimeouts(session.value, 30000, 30000, 30000, 30000));
   Handle connection(WinHttpConnect(session.value, host.c_str(), parts.nPort, 0));

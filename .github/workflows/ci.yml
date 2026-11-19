@@ -19,7 +19,7 @@ jobs:
           python-version: '3.12'
       - name: Install libcurl headers
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y libcurl4-openssl-dev
+        run: sudo apt-get update && sudo apt-get install -y libcurl4-openssl-dev libsecret-1-dev
       - run: cmake -B build -DCMAKE_BUILD_TYPE=Release
       - run: cmake --build build --config Release
       - run: ctest --test-dir build --output-on-failure -C Release

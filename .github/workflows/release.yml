@@ -44,7 +44,7 @@ jobs:
 
       - name: Install libcurl headers
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y libcurl4-openssl-dev
+        run: sudo apt-get update && sudo apt-get install -y libcurl4-openssl-dev libsecret-1-dev
 
       - name: Configure CMake
         run: cmake -B build -DCMAKE_BUILD_TYPE=Release
@@ -81,7 +81,7 @@ jobs:
 
       - name: Install libcurl headers
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y libcurl4-openssl-dev
+        run: sudo apt-get update && sudo apt-get install -y libcurl4-openssl-dev libsecret-1-dev
 
       - name: Configure CMake
         shell: bash

@@ -1,5 +1,27 @@
 # WebDAV sync
 
+## Saved connection settings
+
+Run `kryptos sync-config` once (interactive menu 10) to save the WebDAV root URL,
+directory and username. Future `kryptos sync` calls and menu 7 reuse them.
+Command-line arguments override environment variables, which override saved
+settings. Settings are stored in `kryptos-webdav.conf` next to the executable and
+are preserved when only the executable is upgraded. The fields are encoded to
+support special characters; this file is not encrypted and contains no password.
+
+Setup offers to remember the WebDAV login password in Windows Credential Manager,
+macOS Keychain, or Linux Secret Service (libsecret and an unlocked desktop keyring
+are required). If the credential store is unavailable, settings can still be saved
+and the password entered for each sync. Remembered credentials are tied to the
+exact server URL and username; they are never reused for a different connection.
+The backup encryption password is not saved.
+
+Use `kryptos sync-config --clear` (menu 11) to delete the saved connection and its
+remembered login password; this preserves account metadata and remote backups.
+If authentication fails after a password change, run setup again to replace the
+stored password. Windows network requests follow the current user's system proxy
+settings; no proxy is configured in the WebDAV connection file.
+
 ```sh
 kryptos sync https://dav.example/remote.php/dav/files/alice Backups/Kryptos alice
 ```

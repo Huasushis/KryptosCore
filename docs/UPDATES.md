@@ -2,6 +2,9 @@
 
 Replacing only `kryptos` / `kryptos.exe` in the existing directory preserves
 `kryptos_data.dat`. Do not replace the whole directory or delete the data file.
+Preserve `kryptos-webdav.conf` and `kryptos-update-settings.txt` too when present.
+Remembered WebDAV passwords live in the current user's OS credential store, so
+moving the program to a different computer does not carry the remembered password.
 The metadata format and password algorithm are unchanged by this iteration.
 
 ## Built-in updater

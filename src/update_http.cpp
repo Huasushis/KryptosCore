@@ -16,7 +16,7 @@ struct Handle {
   explicit Handle(HINTERNET h) : value(h) { if (!h) throw std::runtime_error("Update connection failed"); }
   ~Handle() { WinHttpCloseHandle(value); }
 };
-void Check(BOOL ok) { if (!ok) throw std::runtime_error("Update network or TLS request failed"); }
+void Check(BOOL ok) { if (!ok) throw std::runtime_error("Update network or TLS request failed (Windows error " + std::to_string(GetLastError()) + ")"); }
 #else
 struct Body { std::string bytes; size_t limit; };
 size_t Receive(char* data, size_t size, size_t count, void* context) {
@@ -39,7 +39,7 @@ std::string DownloadUpdate(const std::string& url, size_t max_bytes) {
   const std::wstring host(parts.lpszHostName, parts.dwHostNameLength);
   std::wstring path(parts.lpszUrlPath, parts.dwUrlPathLength);
   if (parts.dwExtraInfoLength) path.append(parts.lpszExtraInfo, parts.dwExtraInfoLength);
-  Handle session(WinHttpOpen(L"KryptosCore-Updater", WINHTTP_ACCESS_TYPE_DEFAULT_PROXY, WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0));
+  Handle session(WinHttpOpen(L"KryptosCore-Updater", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0));
   const int timeout = max_bytes <= 16384 ? 5000 : 60000;
   Check(WinHttpSetTimeouts(session.value, timeout, timeout, timeout, timeout));
   Handle connection(WinHttpConnect(session.value, host.c_str(), parts.nPort, 0));

@@ -25,6 +25,11 @@ Passwords are never stored — they are regenerated on-the-fly from a master pre
 
 ## Quick Start
 
+Run `kryptos sync-config` to save the WebDAV server, directory and username locally
+and optionally remember its login password in the system credential store. Then
+`kryptos sync` reuses the connection. The separate backup password is not saved.
+Use `kryptos sync-config --clear` to forget the connection without deleting accounts.
+
 Program upgrades preserve `kryptos_data.dat` when only the executable is replaced.
 Use `kryptos update` for a verified update, `kryptos update --check` to check only,
 and `kryptos update --auto on` for optional startup checks (installation remains
